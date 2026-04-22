@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 
@@ -13,6 +14,41 @@ def split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _json_items(value: str | None) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def names_from_json(value: str | None) -> list[str]:
+    names: list[str] = []
+    for item in _json_items(value):
+        name = str(item.get("name", "")).strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def people_from_json(value: str | None) -> list["PersonRef"]:
+    people: list[PersonRef] = []
+    for item in _json_items(value):
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        people.append(
+            PersonRef(
+                name=name,
+                email=str(item.get("email") or "").strip(),
+                affiliation=str(item.get("affiliation") or "").strip(),
+            )
+        )
+    return people
 
 
 @dataclass
@@ -39,26 +75,27 @@ class SampleForm:
 
     @classmethod
     def from_form(cls, form: Any) -> "SampleForm":
-        return cls(
-            name=form.get("name", "").strip(),
-            sample_type=form.get("sample_type", "").strip(),
-            composition=form.get("composition", "").strip(),
-            parent_sample_id=form.get("parent_sample_id", "").strip(),
-            synthesis=split_csv(form.get("synthesis")),
-            synthesis_details=form.get("synthesis_details", "").strip(),
-            processing=split_csv(form.get("processing")),
-            processing_details=form.get("processing_details", "").strip(),
-            status=form.get("status", "").strip(),
-            location=form.get("location", "").strip(),
-            sources=[
+        sources = people_from_json(form.get("sources_data"))
+        if not sources and form.get("source_name", "").strip():
+            sources = [
                 PersonRef(
                     name=form.get("source_name", "").strip(),
                     email=form.get("source_email", "").strip(),
                     affiliation=form.get("source_affiliation", "").strip(),
                 )
             ]
-            if form.get("source_name", "").strip()
-            else [],
+        return cls(
+            name=(form.get("sample_name") or form.get("name", "")).strip(),
+            sample_type=form.get("sample_type", "").strip(),
+            composition=form.get("composition", "").strip(),
+            parent_sample_id=(form.get("parent_sample") or form.get("parent_sample_id", "")).strip(),
+            synthesis=split_csv(form.get("synthesis")),
+            synthesis_details=form.get("synthesis_details", "").strip(),
+            processing=names_from_json(form.get("processing_data")) or split_csv(form.get("processing")),
+            processing_details=form.get("processing_details", "").strip(),
+            status=form.get("status", "").strip(),
+            location=form.get("location", "").strip(),
+            sources=sources,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,24 +116,29 @@ class ResultForm:
 
     @classmethod
     def from_form(cls, form: Any) -> "ResultForm":
-        return cls(
-            name=form.get("name", "").strip(),
-            sample_id=form.get("sample_id", "").strip(),
-            data_type=form.get("data_type", "").strip(),
-            upload_method=form.get("upload_method", "").strip(),
-            description=form.get("description", "").strip(),
-            characterization=split_csv(form.get("characterization")),
-            link=form.get("link", "").strip(),
-            related_result_id=form.get("related_result_id", "").strip(),
-            sources=[
+        sources = people_from_json(form.get("sources_data"))
+        if not sources and form.get("source_name", "").strip():
+            sources = [
                 PersonRef(
                     name=form.get("source_name", "").strip(),
                     email=form.get("source_email", "").strip(),
                     affiliation=form.get("source_affiliation", "").strip(),
                 )
             ]
-            if form.get("source_name", "").strip()
-            else [],
+        upload_method = (form.get("upload_method") or form.get("data_type", "")).strip()
+        link = (form.get("link") or form.get("data_link") or form.get("onedrive_path") or "").strip()
+        related_result_id = (form.get("related_result_id") or form.get("parent_dataset") or "").strip()
+        sample_id = (form.get("sample_id") or form.get("parent_sample") or "").strip()
+        return cls(
+            name=form.get("name", "").strip(),
+            sample_id=sample_id,
+            data_type=(form.get("entry_type") or form.get("data_type", "")).strip(),
+            upload_method=upload_method,
+            description=(form.get("brief_description") or form.get("description", "")).strip(),
+            characterization=names_from_json(form.get("char_data")) or split_csv(form.get("characterization")),
+            link=link,
+            related_result_id=related_result_id,
+            sources=sources,
         )
 
     def to_dict(self) -> dict[str, Any]:

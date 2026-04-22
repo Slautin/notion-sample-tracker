@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
+import io
 from pathlib import Path
 from typing import Callable
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 
 from notion_sample_tracker.models import BacklogEvent, ResultForm, SampleForm
 from notion_sample_tracker.services.backlog import JsonlBacklog
@@ -38,11 +40,21 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
     @app.get("/")
     def index():
+        if settings.notion_home_url:
+            return redirect(settings.notion_home_url)
         return render_template("index.html")
+
+    @app.get("/add_sample")
+    def add_sample():
+        return render_template("add_sample.html")
+
+    @app.get("/add_results")
+    def add_results():
+        return render_template("add_results.html")
 
     @app.get("/samples/new")
     def new_sample():
-        return render_template("sample_form.html", mode="create", sample=None, samples=_safe_list(notion.list_samples))
+        return render_template("add_sample.html")
 
     @app.post("/samples")
     def create_sample():
@@ -100,13 +112,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
     @app.get("/results/new")
     def new_result():
-        return render_template(
-            "result_form.html",
-            mode="create",
-            result=None,
-            samples=_safe_list(notion.list_samples),
-            results=_safe_list(notion.list_results),
-        )
+        return render_template("add_results.html")
 
     @app.post("/results")
     def create_result():
@@ -174,6 +180,113 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     def backlog_view():
         return render_template("backlog.html", samples=backlog.recent("sample"), results=backlog.recent("result"))
 
+    @app.get("/api/options")
+    def api_options():
+        try:
+            return jsonify({"success": True, "options": notion.get_options()})
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 500
+
+    @app.get("/api/parent-samples")
+    def api_parent_samples():
+        try:
+            return jsonify({"success": True, "samples": [{"name": item["name"]} for item in notion.list_samples()]})
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 500
+
+    @app.get("/api/parent-datasets")
+    def api_parent_datasets():
+        try:
+            return jsonify({"success": True, "datasets": [{"id": item["name"], "name": item["name"]} for item in notion.list_results()]})
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 500
+
+    @app.post("/api/submit")
+    def api_submit_sample():
+        form = SampleForm.from_form(request.form)
+        backlog.append(BacklogEvent(action="create", entity="sample", payload=_form_payload(request.form)))
+        try:
+            page = notion.create_sample(form)
+            uploaded_paths = _archive_uploads(onedrive, f"samples/{page['id']}/files", request.files.getlist("photos"))
+            snapshot = onedrive.upload_json(
+                f"samples/{page['id']}/record.json",
+                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "files": uploaded_paths},
+            )
+            backlog.append(
+                BacklogEvent(
+                    action="create",
+                    entity="sample",
+                    payload=form.to_dict(),
+                    notion_page_id=page["id"],
+                    onedrive_paths=[snapshot.path, *uploaded_paths],
+                    status="complete",
+                )
+            )
+            return jsonify({"success": True, "message": "Sample submitted successfully"})
+        except Exception as exc:
+            backlog.append(BacklogEvent(action="create", entity="sample", payload=form.to_dict(), status="failed", error=str(exc)))
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+    @app.post("/api/submit-data")
+    def api_submit_result():
+        form = ResultForm.from_form(request.form)
+        backlog.append(BacklogEvent(action="create", entity="result", payload=_form_payload(request.form)))
+        try:
+            page = notion.create_result(form)
+            snapshot = onedrive.upload_json(
+                f"results/{page['id']}/record.json",
+                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page},
+            )
+            backlog.append(
+                BacklogEvent(
+                    action="create",
+                    entity="result",
+                    payload=form.to_dict(),
+                    notion_page_id=page["id"],
+                    onedrive_paths=[snapshot.path],
+                    status="complete",
+                )
+            )
+            return jsonify({"success": True, "message": "Data submitted successfully"})
+        except Exception as exc:
+            backlog.append(BacklogEvent(action="create", entity="result", payload=form.to_dict(), status="failed", error=str(exc)))
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+    @app.post("/api/create-upload-session")
+    def api_create_upload_session():
+        try:
+            data = request.get_json(force=True)
+            filename = Path(data.get("filename", "")).name
+            entry_name = _safe_segment(data.get("entry_name", "data_entry"))
+            if not filename:
+                return jsonify({"success": False, "error": "filename is required"}), 400
+            session = onedrive.create_upload_session(f"results/{entry_name}/{filename}")
+            return jsonify({"success": True, **session})
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 500
+
+    @app.post("/api/save-json")
+    def api_save_json():
+        data = _form_payload(request.form)
+        data["_meta"] = {"exported_from": "sample_submission_form"}
+        filename_base = _safe_segment(data.get("sample_name") or data.get("name") or "sample")
+        buffer = io.BytesIO(json.dumps(data, indent=2).encode("utf-8"))
+        buffer.seek(0)
+        return send_file(buffer, mimetype="application/json", as_attachment=True, download_name=f"{filename_base}.json")
+
+    @app.post("/api/load-json")
+    def api_load_json():
+        uploaded = request.files.get("json_file")
+        if not uploaded:
+            return jsonify({"success": False, "error": "No JSON file provided"}), 400
+        try:
+            data = json.load(uploaded)
+        except json.JSONDecodeError:
+            return jsonify({"success": False, "error": "Invalid JSON format"}), 400
+        data.pop("_meta", None)
+        data.pop("photos", None)
+        return jsonify({"success": True, "data": data})
+
     @app.get("/health")
     def health():
         return {"status": "ok"}
@@ -197,3 +310,12 @@ def _archive_uploads(onedrive: OneDriveClient, prefix: str, files) -> list[str]:
         result = onedrive.upload_file(f"{prefix}/{safe_name}", file_storage.stream, file_storage.mimetype)
         paths.append(result.path)
     return paths
+
+
+def _form_payload(form) -> dict:
+    return {key: form.get(key) for key in form.keys()}
+
+
+def _safe_segment(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value or "").strip())
+    return cleaned or "entry"

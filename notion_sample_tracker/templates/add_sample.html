@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sample Management System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            padding: 0;
+        }
+
+        .header {
+            background: #FF8200;
+            color: white;
+            padding: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin: 0;
+            color: white;
+        }
+
+        .header p {
+            margin-top: 5px;
+            font-size: 14px;
+            opacity: 0.95;
+        }
+
+        .main-content {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 2px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+            padding: 40px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #58595B;
+            margin-bottom: 10px;
+            font-size: 32px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: #58595B;
+            font-size: 16px;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+
+        .upload-section {
+            margin-bottom: 30px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .upload-btn {
+            padding: 12px 24px;
+            background: #58595B;
+            color: white;
+            border: none;
+            border-radius: 2px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .upload-btn:hover { background: #404041; }
+        #jsonFileInput { display: none; }
+
+        .form-group { margin-bottom: 28px; }
+        .form-group.hidden { display: none; }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #58595B;
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        .required { color: #FF8200; }
+
+        input[type="text"],
+        input[type="email"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #ccc;
+            border-radius: 2px;
+            font-size: 15px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            background: white;
+        }
+
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #FF8200;
+            box-shadow: 0 0 0 2px rgba(255, 130, 0, 0.1);
+        }
+
+        .conditional-section {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 2px;
+            border-left: 4px solid #FF8200;
+            margin-top: 15px;
+        }
+
+        .assigned-to-section {
+            background: #f9f9f9;
+            padding: 25px;
+            border-radius: 2px;
+            border-left: 4px solid #FF8200;
+        }
+
+        .assigned-to-section2 {
+            background: #f9f9f9;
+            padding: 25px;
+            border-radius: 2px;
+        }
+
+        .assigned-to-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .assigned-to-header h3 {
+            color: #58595B;
+            font-size: 18px;
+            margin: 0;
+        }
+
+        .add-person-btn {
+            padding: 8px 16px;
+            background: #FF8200;
+            color: white;
+            border: none;
+            border-radius: 2px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .add-person-btn:hover { background: #E67300; }
+
+        .selected-people-list { margin-bottom: 20px; }
+
+        .person-chip {
+            display: inline-flex;
+            align-items: center;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            padding: 6px 12px;
+            margin: 4px;
+            font-size: 14px;
+        }
+
+        .person-chip.from-list {
+            border-color: #FF8200;
+            background: #fff5ec;
+        }
+
+        .person-chip.new-person {
+            border-color: #58595B;
+            background: #f5f5f5;
+        }
+
+        .person-chip-remove {
+            margin-left: 8px;
+            cursor: pointer;
+            color: #999;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .person-chip-remove:hover { color: #333; }
+
+        .person-form {
+            background: white;
+            padding: 20px;
+            border-radius: 2px;
+            border: 1px solid #ddd;
+            margin-bottom: 15px;
+        }
+
+        .person-form-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .person-form-title {
+            color: #58595B;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .remove-form-btn {
+            background: none;
+            border: none;
+            color: #dc3545;
+            cursor: pointer;
+            font-size: 20px;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+        }
+
+        .remove-form-btn:hover { color: #a71d2a; }
+
+        .dropdown-select { margin-bottom: 15px; }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 2px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary { background: #FF8200; color: white; }
+        .btn-primary:hover { background: #E67300; }
+
+        .btn-secondary { background: #58595B; color: white; }
+        .btn-secondary:hover { background: #404041; }
+
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+
+        .message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 2px;
+            font-size: 15px;
+            display: none;
+        }
+
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+
+        .file-info {
+            font-size: 13px;
+            color: #666;
+            margin-top: 6px;
+            font-style: italic;
+        }
+
+        .footer {
+            max-width: 1200px;
+            margin: 40px auto 20px;
+            padding: 20px;
+            text-align: center;
+            color: #58595B;
+            font-size: 14px;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+            font-style: italic;
+        }
+
+        /* =========================
+           Q7 Improvements: Dropzone + Thumbnails
+           ========================= */
+
+        .dropzone {
+            border: 2px dashed #ccc;
+            border-radius: 2px;
+            padding: 18px;
+            background: white;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .dropzone .dropzone-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .dropzone .dropzone-hint {
+            color: #58595B;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .dropzone.dragover {
+            border-color: #FF8200;
+            box-shadow: 0 0 0 2px rgba(255, 130, 0, 0.12);
+        }
+
+        .thumb-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .thumb-card {
+            border: 1px solid #ddd;
+            border-radius: 2px;
+            background: #fff;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .thumb-preview {
+            height: 110px;
+            background: #f5f5f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .thumb-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .thumb-preview .pdf-badge {
+            font-weight: 700;
+            color: #721c24;
+            background: #f8d7da;
+            border: 1px solid #dc3545;
+            padding: 6px 10px;
+            border-radius: 14px;
+            font-size: 12px;
+        }
+
+        .thumb-meta {
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .thumb-name {
+            font-size: 13px;
+            color: #58595B;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .thumb-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .thumb-size {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .thumb-remove {
+            border: none;
+            background: #58595B;
+            color: white;
+            border-radius: 2px;
+            cursor: pointer;
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .thumb-remove:hover { background: #404041; }
+
+        /* Utility small button to match */
+        .btn-small {
+            width: auto;
+            padding: 10px 14px;
+            font-size: 14px;
+            letter-spacing: 0.2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>Center for Advanced Materials & Manufacturing</h1>
+            <p>Sample Management System</p>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="container">
+            <h1>Sample Submission Form</h1>
+            <p class="subtitle">Complete the form below to register a new sample in the database.</p>
+
+            <div class="upload-section">
+                <button type="button" class="upload-btn" onclick="document.getElementById('jsonFileInput').click()">
+                    📁 Upload from JSON File
+                </button>
+                <input type="file" id="jsonFileInput" accept=".json" onchange="loadFromJSON(event)">
+                <div class="file-info">Load previously saved form data from a JSON file</div>
+            </div>
+
+            <form id="sampleForm">
+                <!-- Q1 -->
+                <div class="form-group">
+                    <label for="sample_name">1. Sample Name <span class="required">*</span></label>
+                    <input type="text" id="sample_name" name="sample_name" required placeholder="Enter sample name">
+                </div>
+
+                <!-- Q2 -->
+                <div class="form-group">
+                    <label for="sample_type">2. Sample Type <span class="required">*</span></label>
+                    <select id="sample_type" name="sample_type" required onchange="toggleSampleType()">
+                        <option value="">-- Select Sample Type --</option>
+                        <option value="Root Sample">Root Sample</option>
+                        <option value="Sub-Sample">Sub-Sample</option>
+                    </select>
+                </div>
+
+                <!-- Root fields -->
+                <div id="rootSampleFields" class="conditional-section" style="display: none;">
+                    <div class="form-group">
+                        <label for="composition">2.1. Composition <span class="required">*</span></label>
+                        <input type="text" id="composition" name="composition" placeholder="Enter composition">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="synthesis">2.2. Synthesis</label>
+                        <select id="synthesis" name="synthesis">
+                            <option value="">-- Select Synthesis Method --</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="synthesis_details">2.3. Synthesis Details</label>
+                        <textarea id="synthesis_details" name="synthesis_details" placeholder="Enter synthesis details"></textarea>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label>2.4. Source</label>
+                        <button type="button" class="add-person-btn" onclick="addNewSourceForm()">+ Add Source</button>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="assigned-to-section2">
+                            <div id="selectedSourcesList" class="selected-people-list">
+                                <div class="empty-state">No sources selected yet. Select from list or add new source.</div>
+                            </div>
+
+                            <div class="dropdown-select">
+                                <label for="existing_source_select">Select from existing sources:</label>
+                                <select id="existing_source_select" onchange="addExistingSource()">
+                                    <option value="">-- Select Source --</option>
+                                </select>
+                            </div>
+
+                            <div id="newSourceFormsContainer"></div>
+                        </div>
+
+                        <input type="hidden" id="sources_data" name="sources_data">
+                    </div>
+
+                </div>
+
+                <!-- Sub-sample fields -->
+                <div id="subSampleFields" class="conditional-section" style="display: none;">
+                    <div class="form-group">
+                        <label for="parent_sample">2.1. Parent Sample <span class="required">*</span></label>
+                        <select id="parent_sample" name="parent_sample">
+                            <option value="">-- Select Parent Sample --</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Q3 -->
+                <div class="form-group">
+                    <label>3. Processing</label>
+                    <div class="assigned-to-section">
+                        <div class="assigned-to-header">
+                            <h3>Selected Processing Methods</h3>
+                        </div>
+
+                        <div id="selectedProcessingList" class="selected-people-list">
+                            <div class="empty-state">No processing methods selected yet. Select from the list below.</div>
+                        </div>
+
+                        <div class="dropdown-select">
+                            <label for="existing_processing_select">Select processing methods:</label>
+                            <select id="existing_processing_select" onchange="addExistingProcessing()">
+                                <option value="">-- Select Processing Method --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <input type="hidden" id="processing_data" name="processing_data">
+                </div>
+
+                <!-- Q4 -->
+                <div class="form-group">
+                    <label for="processing_details">4. Processing Details</label>
+                    <textarea id="processing_details" name="processing_details" placeholder="Enter processing details"></textarea>
+                </div>
+
+                <!-- Q5 -->
+                <div class="form-group">
+                    <label for="status">5. Status</label>
+                    <select id="status" name="status">
+                        <option value="">-- Select Status --</option>
+                        <option value="in work">In Work</option>
+                        <option value="waiting">Waiting</option>
+                        <option value="archived">Archived</option>
+                    </select>
+                </div>
+
+                <!-- Q6 -->
+                <div class="form-group">
+                    <label for="location">6. Location</label>
+                    <input type="text" id="location" name="location" placeholder="Enter location">
+                </div>
+
+                <!-- Q7 upgraded -->
+                <div class="form-group">
+                    <label>7. Photos</label>
+
+                    <div class="assigned-to-section">
+                        <div class="assigned-to-header">
+                            <h3>Selected Files</h3>
+                            <button type="button" class="add-person-btn" id="addPhotosBtn">+ Add Files</button>
+                        </div>
+
+                        <div id="photosDropzone" class="dropzone" aria-label="File drop area">
+                            <div class="dropzone-row">
+                                <div class="dropzone-hint">
+                                    Drag & drop files here, or click <b>+ Add Files</b>.<br>
+                                </div>
+                                <button type="button" class="btn btn-secondary btn-small" id="clearPhotosBtn">Clear All</button>
+                            </div>
+
+                            <div id="selectedFilesList" class="selected-people-list" style="margin-top: 12px;">
+                                <div class="empty-state">No files selected yet.</div>
+                            </div>
+
+                            <div id="thumbnailsGrid" class="thumb-grid" aria-label="Thumbnails"></div>
+                        </div>
+                    </div>
+
+                    <input type="file" id="photos" multiple accept="image/*" style="display:none">
+                    <div class="file-info">Upload sample photos or documentation (multiple files allowed). You can add files multiple times.</div>
+                </div>
+
+                <div class="button-group">
+                    <button type="button" class="btn btn-secondary" onclick="saveAsJSON()">💾 Save as JSON</button>
+                    <button type="submit" class="btn btn-primary" id="submitBtn">✓ Submit to Database</button>
+                </div>
+            </form>
+
+            <div id="message" class="message"></div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>© 2025 University of Tennessee, Knoxville. All rights reserved.</p>
+    </div>
+
+    <script>
+        // =========================
+        // Globals
+        // =========================
+        let selectedSources = [];
+        let selectedProcessing = [];
+        let sourceFormCounter = 0;
+
+        // Q7 state: we keep a list of entries so we can show thumbnails and remove them safely.
+        // entry: { file: File, id: string, previewUrl: string|null, isImage: boolean }
+        let selectedPhotos = [];
+
+        // =========================
+        // Init
+        // =========================
+        window.addEventListener('DOMContentLoaded', async () => {
+            await loadOptions();
+            initQ7Photos();
+            updateSelectedFilesList();
+            updateThumbnails();
+        });
+
+        // =========================
+        // Load options
+        // =========================
+        async function loadOptions() {
+            try {
+                const response = await fetch('/api/options');
+                const result = await response.json();
+
+                if (result.success && result.options) {
+                    populateSelect('synthesis', result.options.synthesis || []);
+                    populateSelect('existing_processing_select', result.options.processing || []);
+                    populateSelect('existing_source_select', result.options.source || []);
+                }
+            } catch (error) {
+                console.error('Error loading options:', error);
+            }
+        }
+
+        function populateSelect(selectId, options) {
+            const select = document.getElementById(selectId);
+            if (!select) return;
+
+            const currentValue = select.value;
+            const firstOption = select.options[0];
+
+            select.innerHTML = '';
+            if (firstOption) select.appendChild(firstOption);
+
+            options.forEach(option => {
+                const optElement = document.createElement('option');
+                optElement.value = option;
+                optElement.textContent = option;
+                select.appendChild(optElement);
+            });
+
+            if (currentValue) select.value = currentValue;
+        }
+
+        // =========================
+        // Sample type toggle
+        // =========================
+        async function toggleSampleType() {
+            const sampleType = document.getElementById('sample_type').value;
+            const rootFields = document.getElementById('rootSampleFields');
+            const subFields = document.getElementById('subSampleFields');
+
+            if (sampleType === 'Root Sample') {
+                rootFields.style.display = 'block';
+                subFields.style.display = 'none';
+                document.getElementById('composition').required = true;
+                document.getElementById('parent_sample').required = false;
+            } else if (sampleType === 'Sub-Sample') {
+                rootFields.style.display = 'none';
+                subFields.style.display = 'block';
+                document.getElementById('composition').required = false;
+                document.getElementById('parent_sample').required = true;
+                await loadParentSamples();
+            } else {
+                rootFields.style.display = 'none';
+                subFields.style.display = 'none';
+                document.getElementById('composition').required = false;
+                document.getElementById('parent_sample').required = false;
+            }
+        }
+
+        async function loadParentSamples() {
+            try {
+                const response = await fetch('/api/parent-samples');
+                const result = await response.json();
+
+                if (result.success && result.samples) {
+                    const select = document.getElementById('parent_sample');
+                    select.innerHTML = '<option value="">-- Select Parent Sample --</option>';
+
+                    result.samples.forEach(sample => {
+                        const option = document.createElement('option');
+                        option.value = sample.name;
+                        option.textContent = sample.name;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading parent samples:', error);
+            }
+        }
+
+        // =========================
+        // Q3 Processing
+        // =========================
+        function addExistingProcessing() {
+            const select = document.getElementById('existing_processing_select');
+            const processingName = select.value;
+            if (!processingName) return;
+
+            if (selectedProcessing.some(p => p.name === processingName)) {
+                alert('This processing method is already selected');
+                select.value = '';
+                return;
+            }
+
+            selectedProcessing.push({ name: processingName });
+            updateSelectedProcessingList();
+            updateProcessingHiddenInput();
+            select.value = '';
+        }
+
+        function removeProcessing(index) {
+            selectedProcessing.splice(index, 1);
+            updateSelectedProcessingList();
+            updateProcessingHiddenInput();
+        }
+
+        function updateSelectedProcessingList() {
+            const container = document.getElementById('selectedProcessingList');
+
+            if (selectedProcessing.length === 0) {
+                container.innerHTML = '<div class="empty-state">No processing methods selected yet. Select from the list below.</div>';
+                return;
+            }
+
+            container.innerHTML = selectedProcessing.map((processing, index) => `
+                <span class="person-chip from-list">
+                    ${escapeHtml(processing.name)}
+                    <span class="person-chip-remove" onclick="removeProcessing(${index})">×</span>
+                </span>
+            `).join('');
+        }
+
+        function updateProcessingHiddenInput() {
+            document.getElementById('processing_data').value = JSON.stringify(selectedProcessing);
+        }
+
+        // =========================
+        // Q2.4 Sources
+        // =========================
+        function addExistingSource() {
+            const select = document.getElementById('existing_source_select');
+            const sourceName = select.value;
+            if (!sourceName) return;
+
+            if (selectedSources.some(s => s.name === sourceName && s.type === 'existing')) {
+                alert('This source is already selected');
+                select.value = '';
+                return;
+            }
+
+            selectedSources.push({ type: 'existing', name: sourceName });
+            updateSelectedSourcesList();
+            updateSourcesHiddenInput();
+            select.value = '';
+        }
+
+        function addNewSourceForm() {
+            sourceFormCounter++;
+            const formId = `source_form_${sourceFormCounter}`;
+
+            const formHTML = `
+                <div class="person-form" id="${formId}">
+                    <div class="person-form-header">
+                        <div class="person-form-title">New Source #${sourceFormCounter}</div>
+                        <button type="button" class="remove-form-btn" onclick="removeSourceForm('${formId}')">×</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Name and Surname <span class="required">*</span></label>
+                        <input type="text" class="source-name-input" data-form-id="${formId}" required placeholder="Enter full name">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" class="source-email-input" data-form-id="${formId}" placeholder="Enter email address">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Affiliation</label>
+                        <input type="text" class="source-affiliation-input" data-form-id="${formId}" placeholder="Enter affiliation">
+                    </div>
+
+                    <button type="button" class="btn btn-primary btn-small" onclick="saveNewSource('${formId}')">Save Source</button>
+                </div>
+            `;
+
+            document.getElementById('newSourceFormsContainer').insertAdjacentHTML('beforeend', formHTML);
+        }
+
+        function saveNewSource(formId) {
+            const form = document.getElementById(formId);
+            const name = form.querySelector('.source-name-input').value.trim();
+            const email = form.querySelector('.source-email-input').value.trim();
+            const affiliation = form.querySelector('.source-affiliation-input').value.trim();
+
+            if (!name) {
+                alert('Name and Surname is required');
+                return;
+            }
+
+            if (selectedSources.some(s => s.name === name)) {
+                alert('A source with this name is already selected');
+                return;
+            }
+
+            selectedSources.push({
+                type: 'new',
+                name,
+                email: email || null,
+                affiliation: affiliation || null
+            });
+
+            updateSelectedSourcesList();
+            updateSourcesHiddenInput();
+            form.remove();
+        }
+
+        function removeSourceForm(formId) {
+            document.getElementById(formId).remove();
+        }
+
+        function removeSource(index) {
+            selectedSources.splice(index, 1);
+            updateSelectedSourcesList();
+            updateSourcesHiddenInput();
+        }
+
+        function updateSelectedSourcesList() {
+            const container = document.getElementById('selectedSourcesList');
+
+            if (selectedSources.length === 0) {
+                container.innerHTML = '<div class="empty-state">No sources selected yet. Select from list or add new source.</div>';
+                return;
+            }
+
+            container.innerHTML = selectedSources.map((source, index) => {
+                const chipClass = source.type === 'existing' ? 'from-list' : 'new-person';
+                const label = source.type === 'existing' ? source.name : `${source.name} (New)`;
+                return `
+                    <span class="person-chip ${chipClass}">
+                        ${escapeHtml(label)}
+                        <span class="person-chip-remove" onclick="removeSource(${index})">×</span>
+                    </span>
+                `;
+            }).join('');
+        }
+
+        function updateSourcesHiddenInput() {
+            document.getElementById('sources_data').value = JSON.stringify(selectedSources);
+        }
+
+        // =========================
+        // Q7 Photos: init + drag&drop + thumbnails
+        // =========================
+        function initQ7Photos() {
+            const photosInput = document.getElementById('photos');
+            const addBtn = document.getElementById('addPhotosBtn');
+            const clearBtn = document.getElementById('clearPhotosBtn');
+            const dropzone = document.getElementById('photosDropzone');
+
+            addBtn.addEventListener('click', () => photosInput.click());
+            clearBtn.addEventListener('click', () => clearAllPhotos());
+
+            photosInput.addEventListener('change', (e) => {
+                addFilesToSelection(Array.from(e.target.files || []));
+                e.target.value = '';
+            });
+
+            // Drag & drop
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.classList.add('dragover');
+            });
+
+            dropzone.addEventListener('dragleave', () => {
+                dropzone.classList.remove('dragover');
+            });
+
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('dragover');
+
+                const files = Array.from(e.dataTransfer.files || []);
+
+                const imageFiles = files.filter(f => f.type.startsWith('image/'));
+                const rejected = files.filter(f => !f.type.startsWith('image/'));
+
+                if (rejected.length > 0) {
+                    showPhotoWarning(`${rejected.length} non-image file(s) ignored`);
+                }
+
+                if (imageFiles.length > 0) {
+                    addFilesToSelection(imageFiles);
+                }
+            });
+
+        }
+
+        function addFilesToSelection(files) {
+            files.forEach(file => {
+                const id = `${file.name}__${file.size}__${file.lastModified}`;
+                const exists = selectedPhotos.some(entry => entry.id === id);
+                if (exists) return;
+
+                const isImage = file.type.startsWith('image/');
+                const previewUrl = isImage ? URL.createObjectURL(file) : null;
+
+                selectedPhotos.push({ file, id, isImage, previewUrl });
+            });
+
+            updateSelectedFilesList();
+            updateThumbnails();
+        }
+
+        function removePhotoByIndex(index) {
+            const entry = selectedPhotos[index];
+            if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+            selectedPhotos.splice(index, 1);
+            updateSelectedFilesList();
+            updateThumbnails();
+        }
+
+        function clearAllPhotos() {
+            selectedPhotos.forEach(entry => {
+                if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+            });
+            selectedPhotos = [];
+            updateSelectedFilesList();
+            updateThumbnails();
+        }
+
+        function updateSelectedFilesList() {
+            const container = document.getElementById('selectedFilesList');
+
+            if (selectedPhotos.length === 0) {
+                container.innerHTML = '<div class="empty-state">No files selected yet.</div>';
+                return;
+            }
+
+            container.innerHTML = selectedPhotos.map((entry, index) => `
+                <span class="person-chip from-list">
+                    ${escapeHtml(entry.file.name)}
+                    <span class="person-chip-remove" onclick="removePhotoByIndex(${index})">×</span>
+                </span>
+            `).join('');
+        }
+
+        function updateThumbnails() {
+            const grid = document.getElementById('thumbnailsGrid');
+            if (!grid) return;
+
+            if (selectedPhotos.length === 0) {
+                grid.innerHTML = '';
+                return;
+            }
+
+            grid.innerHTML = selectedPhotos.map((entry, index) => {
+                const file = entry.file;
+                const sizeText = formatBytes(file.size);
+
+                const preview = entry.isImage
+                    ? `<img src="${entry.previewUrl}" alt="${escapeHtmlAttr(file.name)}">`
+                    : `<div class="pdf-badge">PDF</div>`;
+
+                return `
+                    <div class="thumb-card">
+                        <div class="thumb-preview">${preview}</div>
+                        <div class="thumb-meta">
+                            <div class="thumb-name" title="${escapeHtmlAttr(file.name)}">${escapeHtml(file.name)}</div>
+                            <div class="thumb-actions">
+                                <div class="thumb-size">${escapeHtml(sizeText)}</div>
+                                <button type="button" class="thumb-remove" onclick="removePhotoByIndex(${index})">Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes) || bytes < 0) return '';
+            const units = ['B','KB','MB','GB','TB'];
+            let i = 0;
+            let num = bytes;
+            while (num >= 1024 && i < units.length - 1) {
+                num /= 1024;
+                i++;
+            }
+            return `${num.toFixed(num < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+        }
+
+        // =========================
+        // Form submit
+        // =========================
+        document.getElementById('sampleForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submitBtn');
+            const messageDiv = document.getElementById('message');
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = '⏳ Submitting...';
+            messageDiv.style.display = 'none';
+
+            const formData = new FormData(e.target);
+
+            // Append Q7 files (incremental selection is managed by selectedPhotos)
+            selectedPhotos.forEach(entry => {
+                formData.append('photos', entry.file);
+            });
+
+            try {
+                const response = await fetch('/api/submit', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                messageDiv.style.display = 'block';
+                if (response.ok && result.success) {
+                    messageDiv.className = 'message success';
+                    messageDiv.textContent = '✓ ' + result.message;
+
+                    document.getElementById('sampleForm').reset();
+
+                    selectedProcessing = [];
+                    selectedSources = [];
+                    updateSelectedProcessingList();
+                    updateProcessingHiddenInput();
+                    updateSelectedSourcesList();
+                    updateSourcesHiddenInput();
+
+                    clearAllPhotos(); // important: revoke URLs
+
+                    toggleSampleType();
+                } else {
+                    messageDiv.className = 'message error';
+                    messageDiv.textContent = '✗ ' + (result.error || 'Submission failed');
+                }
+            } catch (error) {
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = '✗ Error: ' + error.message;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '✓ Submit to Database';
+            }
+        });
+
+        // =========================
+        // Save JSON
+        // =========================
+        async function saveAsJSON() {
+            const formData = new FormData(document.getElementById('sampleForm'));
+            const messageDiv = document.getElementById('message');
+
+            try {
+                const response = await fetch('/api/save-json', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = response.headers.get('content-disposition')?.split('filename=')[1] || 'sample_data.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+
+                    messageDiv.style.display = 'block';
+                    messageDiv.className = 'message success';
+                    messageDiv.textContent = '✓ JSON file saved successfully';
+                    setTimeout(() => { messageDiv.style.display = 'none'; }, 3000);
+                } else {
+                    throw new Error('Failed to save JSON');
+                }
+            } catch (error) {
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = '✗ Error saving JSON: ' + error.message;
+            }
+        }
+
+        // =========================
+        // Load from JSON
+        // =========================
+        async function loadFromJSON(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const messageDiv = document.getElementById('message');
+            const formData = new FormData();
+            formData.append('json_file', file);
+
+            try {
+                const response = await fetch('/api/load-json', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    const data = result.data;
+
+                    Object.keys(data).forEach(key => {
+                        if (key === 'processing_data') {
+                            try {
+                                selectedProcessing = JSON.parse(data[key] || '[]');
+                                updateSelectedProcessingList();
+                                updateProcessingHiddenInput();
+                            } catch (e) {
+                                console.error('Error parsing processing data:', e);
+                            }
+                        } else if (key === 'sources_data') {
+                            try {
+                                selectedSources = JSON.parse(data[key] || '[]');
+                                updateSelectedSourcesList();
+                                updateSourcesHiddenInput();
+                            } catch (e) {
+                                console.error('Error parsing sources:', e);
+                            }
+                        } else {
+                            const element = document.getElementById(key);
+                            if (element) element.value = data[key];
+                        }
+                    });
+
+                    toggleSampleType();
+
+                    // Files can't be restored from JSON in browser
+                    clearAllPhotos();
+
+                    messageDiv.style.display = 'block';
+                    messageDiv.className = 'message success';
+                    messageDiv.textContent = '✓ Form loaded from JSON successfully (Photos must be re-added manually).';
+                    setTimeout(() => { messageDiv.style.display = 'none'; }, 4000);
+                } else {
+                    throw new Error(result.error || 'Failed to load JSON');
+                }
+            } catch (error) {
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = '✗ Error loading JSON: ' + error.message;
+            }
+
+            event.target.value = '';
+        }
+
+        // =========================
+        // Helpers
+        // =========================
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, s => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[s]));
+        }
+
+        function escapeHtmlAttr(str) {
+            // same mapping; separate function to keep intent clear
+            return escapeHtml(str);
+        }
+    </script>
+</body>
+</html>

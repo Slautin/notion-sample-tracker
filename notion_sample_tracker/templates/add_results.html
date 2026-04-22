@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Add Data Entry</title>
+
+  <style>
+    /* =========================
+       Base style (matching add_sample.html look)
+       ========================= */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      background: #f5f5f5;
+      min-height: 100vh;
+      padding: 0;
+    }
+
+    .header {
+      background: #FF8200;
+      color: white;
+      padding: 20px 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .header-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      font-weight: 600;
+      margin: 0;
+      color: white;
+    }
+
+    .header p {
+      margin-top: 5px;
+      font-size: 14px;
+      opacity: 0.95;
+    }
+
+    .main-content {
+      max-width: 1200px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 2px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+      padding: 40px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #58595B;
+      margin-bottom: 10px;
+      font-size: 32px;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      color: #58595B;
+      font-size: 16px;
+      margin-bottom: 30px;
+      line-height: 1.6;
+    }
+
+    .form-group { margin-bottom: 28px; }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #58595B;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .required { color: #FF8200; }
+
+    input[type="text"],
+    input[type="url"],
+    input[type="email"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #ccc;
+      border-radius: 2px;
+      font-size: 15px;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      background: white;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #FF8200;
+      box-shadow: 0 0 0 2px rgba(255, 130, 0, 0.1);
+    }
+
+    .conditional-section {
+      background: #f9f9f9;
+      padding: 20px;
+      border-radius: 2px;
+      border-left: 4px solid #FF8200;
+      margin-top: 15px;
+    }
+
+    .file-info {
+      font-size: 13px;
+      color: #666;
+      margin-top: 6px;
+      font-style: italic;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 15px;
+      margin-top: 30px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 15px;
+      border: none;
+      border-radius: 2px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-primary { background: #FF8200; color: white; }
+    .btn-primary:hover { background: #E67300; }
+
+    .btn-secondary { background: #58595B; color: white; }
+    .btn-secondary:hover { background: #404041; }
+
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    .btn-small {
+      width: auto;
+      padding: 10px 14px;
+      font-size: 14px;
+      letter-spacing: 0.2px;
+      text-transform: none;
+    }
+
+    .message {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 2px;
+      font-size: 15px;
+      display: none;
+    }
+
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border-left: 4px solid #28a745;
+    }
+
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border-left: 4px solid #dc3545;
+    }
+
+    /* =========================
+       Sources section (verbatim styling from add_sample.html)
+       ========================= */
+    .assigned-to-section2 {
+      background: #f9f9f9;
+      padding: 25px;
+      border-radius: 2px;
+    }
+
+    .selected-people-list { margin-bottom: 20px; }
+
+    .person-chip {
+      display: inline-flex;
+      align-items: center;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 20px;
+      padding: 6px 12px;
+      margin: 4px;
+      font-size: 14px;
+    }
+
+    .person-chip.from-list {
+      border-color: #FF8200;
+      background: #fff5ec;
+    }
+
+    .person-chip.new-person {
+      border-color: #58595B;
+      background: #f5f5f5;
+    }
+
+    .person-chip-remove {
+      margin-left: 8px;
+      cursor: pointer;
+      color: #999;
+      font-weight: bold;
+      font-size: 16px;
+    }
+
+    .person-chip-remove:hover { color: #333; }
+
+    .person-form {
+      background: white;
+      padding: 20px;
+      border-radius: 2px;
+      border: 1px solid #ddd;
+      margin-bottom: 15px;
+      animation: fadeInSource 0.18s ease-out;
+    }
+
+    @keyframes fadeInSource {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .person-form-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .person-form-title {
+      color: #58595B;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .remove-form-btn {
+      background: none;
+      border: none;
+      color: #dc3545;
+      cursor: pointer;
+      font-size: 20px;
+      padding: 0;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+    }
+
+    .remove-form-btn:hover { color: #a71d2a; }
+
+    .dropdown-select { margin-bottom: 15px; }
+
+    .empty-state {
+      text-align: center;
+      color: #999;
+      padding: 20px;
+      font-style: italic;
+    }
+
+    .add-person-btn {
+      padding: 8px 16px;
+      background: #FF8200;
+      color: white;
+      border: none;
+      border-radius: 2px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .add-person-btn:hover { background: #E67300; }
+
+    .footer {
+      max-width: 1200px;
+      margin: 40px auto 20px;
+      padding: 20px;
+      text-align: center;
+      color: #58595B;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>Center for Advanced Materials & Manufacturing</h1>
+      <p>Data Management</p>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="container">
+      <h1>Add Data Entry</h1>
+      <p class="subtitle">Register a processing / measurement data record.</p>
+
+      <form id="dataForm" novalidate>
+        <!-- 1) Name -->
+        <div class="form-group">
+          <label for="name">1. Name <span class="required">*</span></label>
+          <input type="text" id="name" name="name" required placeholder="Enter data entry name">
+        </div>
+
+        <!-- 2) Entry type -->
+        <div class="form-group">
+          <label for="entry_type">2. Entry type <span class="required">*</span></label>
+          <select id="entry_type" name="entry_type" required>
+            <option value="">-- Select --</option>
+            <!-- will be populated from /api/options if available -->
+          </select>
+          <div class="file-info">Loaded from /api/options if your backend provides data entry types; otherwise defaults are used.</div>
+        </div>
+
+        <!-- 3) Brief Description -->
+        <div class="form-group">
+        <label for="brief_description">3. Brief Description</label>
+        <textarea
+            id="brief_description"
+            name="brief_description"
+            placeholder="Short description of the data entry"
+            rows="3"></textarea>
+        </div>
+
+        <!-- 4) Parent Entry -->
+        <div class="form-group">
+          <label for="parent_entry">4. Parent Entry <span class="required">*</span></label>
+          <select id="parent_entry" name="parent_entry">
+            <option value="">-- Select --</option>
+            <option value="dataset">dataset</option>
+            <option value="sample">sample</option>
+          </select>
+          <div class="file-info">Choose what this entry is linked to. If sample, select a parent sample. If dataset, select a parent dataset.</div>
+        </div>
+
+        <!-- 4.1 Parent Sample (conditional) -->
+        <div id="parentSampleSection" class="conditional-section" style="display:none;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label for="parent_sample">4.1 Parent Sample <span class="required">*</span></label>
+            <select id="parent_sample" name="parent_sample">
+              <option value="">-- Select Parent Sample --</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 4.1 Parent Dataset (conditional) -->
+        <div id="parentDatasetSection" class="conditional-section" style="display:none;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label for="parent_dataset">4.1 Parent Dataset <span class="required">*</span></label>
+            <select id="parent_dataset" name="parent_dataset">
+              <option value="">-- Select Parent Dataset --</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 5) Characterisation -->
+        <div class="form-group">
+        <label>5. Characterisation</label>
+
+        <div class="assigned-to-section2">
+            <div id="selectedCharacterisationList" class="selected-people-list">
+            <div class="empty-state">
+                No characterisation methods selected yet.
+            </div>
+            </div>
+
+            <div class="dropdown-select">
+            <label for="existing_characterisation_select">
+                Select from existing characterisation methods:
+            </label>
+            <select id="existing_characterisation_select">
+                <option value="">-- Select Method --</option>
+                <!-- populated from /api/options OR static -->
+            </select>
+            </div>
+        </div>
+        <input type="hidden"
+                id="char_data"
+                name="char_data">
+        </div>
+
+
+        <!-- 6) data: link or files -->
+        <div class="form-group">
+          <label for="data_type">6. Data <span class="required">*</span> </label>
+          <select id="data_type" name="data_type" >
+            <option value="">-- Select --</option>
+            <option value="link">Link</option>
+            <option value="file">File</option>
+          </select>
+        </div>
+
+        <!-- 6.1 Link -->
+        <div id="linkSection" class="conditional-section" style="display:none;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label for="data_link">6.1 Link <span class="required">*</span></label>
+            <input type="url" id="data_link" name="data_link" placeholder="https://...">
+            <div class="file-info">Provide a web link (SharePoint/OneDrive share link, DOI, website, etc.).</div>
+          </div>
+        </div>
+
+        <!-- 6.2 File -->
+        <div id="fileSection" class="conditional-section" style="display:none;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label for="bigFile">6.2 Files <span class="required">*</span></label>
+            <input type="file" id="bigFile" />
+            <div class="file-info">
+              For large files, the recommended approach is: backend creates an upload session → browser uploads directly to OneDrive → backend stores the OneDrive path.
+            </div>
+
+            <div id="uploadStatus" class="message" style="display:block;margin-top:12px;">
+              No file selected.
+            </div>
+
+            <!-- Will be filled after upload to OneDrive -->
+            <input type="hidden" id="onedrive_path" name="onedrive_path" />
+            <input type="hidden" id="onedrive_item_id" name="onedrive_item_id" />
+            <input type="hidden" id="file_name" name="file_name" />
+            <input type="hidden" id="file_size" name="file_size" />
+            <input type="hidden" id="file_type" name="file_type" />
+          </div>
+        </div>
+
+        <!-- 7) Sources -->
+        <div class="form-group">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <label>7. Sources</label>
+            <button type="button" class="add-person-btn" id="addSourceBtn">+ Add Source</button>
+          </div>
+
+          <div class="assigned-to-section2">
+            <div id="selectedSourcesList" class="selected-people-list">
+              <div class="empty-state">No sources selected yet. Select from list or add new source.</div>
+            </div>
+
+            <div class="dropdown-select">
+              <label for="existing_source_select">Select from existing sources:</label>
+              <select id="existing_source_select">
+                <option value="">-- Select Source --</option>
+              </select>
+            </div>
+
+            <div id="newSourceFormsContainer"></div>
+          </div>
+
+          <input type="hidden" id="sources_data" name="sources_data">
+        </div>
+
+        <div class="button-group">
+          <button type="submit" class="btn btn-primary" id="submitBtn">✓ Submit</button>
+          <button type="reset" class="btn btn-secondary" id="resetBtn">Reset</button>
+        </div>
+      </form>
+
+      <div id="message" class="message"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>© 2025 University of Tennessee, Knoxville. All rights reserved.</p>
+  </div>
+
+<script>
+/* ✅ CHANGED: we keep the selected file here but do NOT upload on selection */
+let pendingFile = null;
+
+/* =========================================================
+   Safe helpers
+========================================================= */
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, s => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[s]));
+}
+
+/* =========================================================
+   Load options (sources + entry types)
+========================================================= */
+async function loadOptions() {
+  let result = null;
+  try {
+    const r = await fetch('/api/options');
+    result = await r.json();
+  } catch (e) {
+    console.warn('Could not load /api/options:', e);
+  }
+
+  const options = (result && result.success && result.options) ? result.options : {};
+
+  // Sources dropdown
+  populateSelect('existing_source_select', Array.isArray(options.source) ? options.source : []);
+
+  // Entry type dropdown: try several keys, then fallback
+  const entryTypes =
+    (Array.isArray(options.entry_type) && options.entry_type) ||
+    ['AFM', 'PFM', 'XRD', 'Annealing'];
+
+  populateSelect('entry_type', entryTypes, true);
+
+  const charMethods =
+    (Array.isArray(options.char_data) && options.char_data) ||
+    (Array.isArray(options.characterisation) && options.characterisation) ||
+    (Array.isArray(options.characterization) && options.characterization) ||
+    [];
+
+  populateSelect('existing_characterisation_select', charMethods, true);
+
+}
+
+function populateSelect(selectId, items, keepFirstPlaceholder=false) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+
+  const placeholderText = keepFirstPlaceholder ? (select.options[0]?.textContent || '-- Select --') : '-- Select --';
+
+  select.innerHTML = '';
+  const opt0 = document.createElement('option');
+  opt0.value = '';
+  opt0.textContent = placeholderText;
+  select.appendChild(opt0);
+
+  (items || []).forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v;
+    select.appendChild(opt);
+  });
+}
+
+/* =========================
+   Characterisation logic
+========================= */
+let selectedCharacterisation = [];
+
+function addExistingCharacterisation() {
+  const select = document.getElementById('existing_characterisation_select');
+  const method = select.value;
+  if (!method) return;
+
+  if (selectedCharacterisation.includes(method)) {
+    alert('This characterisation method is already selected');
+    select.value = '';
+    return;
+  }
+
+  selectedCharacterisation.push(method);
+  updateSelectedCharacterisationList();
+  updateCharacterisationHiddenInput();
+  select.value = '';
+}
+
+function removeCharacterisation(index) {
+  selectedCharacterisation.splice(index, 1);
+  updateSelectedCharacterisationList();
+  updateCharacterisationHiddenInput();
+}
+
+function updateSelectedCharacterisationList() {
+  const container = document.getElementById('selectedCharacterisationList');
+
+  if (selectedCharacterisation.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        No characterisation methods selected yet.
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = selectedCharacterisation.map((method, index) => `
+    <span class="person-chip from-list">
+      ${escapeHtml(method)}
+      <span class="person-chip-remove"
+            onclick="removeCharacterisation(${index})">×</span>
+    </span>
+  `).join('');
+}
+
+function updateCharacterisationHiddenInput() {
+  document.getElementById('char_data').value =
+    JSON.stringify(selectedCharacterisation);
+}
+
+document
+  .getElementById('existing_characterisation_select')
+  .addEventListener('change', addExistingCharacterisation);
+
+/* =========================================================
+   Parent Entry (dataset vs sample) + conditional parent selector
+   - If Parent Entry = sample  -> show Parent Sample and load from /api/parent-samples
+   - If Parent Entry = dataset -> show Parent Dataset and load from /api/parent-datasets
+========================================================= */
+let parentSamplesLoaded = false;
+let parentDatasetsLoaded = false;
+
+function setParentEntryUI(value) {
+  const sampleSection = document.getElementById('parentSampleSection');
+  const datasetSection = document.getElementById('parentDatasetSection');
+
+  const parentSampleSelect = document.getElementById('parent_sample');
+  const parentDatasetSelect = document.getElementById('parent_dataset');
+
+  // Hide both by default
+  sampleSection.style.display = 'none';
+  datasetSection.style.display = 'none';
+
+  // Clear required flags
+  if (parentSampleSelect) parentSampleSelect.required = false;
+  if (parentDatasetSelect) parentDatasetSelect.required = false;
+
+  if (value === 'sample') {
+    sampleSection.style.display = 'block';
+    if (parentSampleSelect) parentSampleSelect.required = true;
+    if (!parentSamplesLoaded) loadParentSamples();
+  } else if (value === 'dataset') {
+    datasetSection.style.display = 'block';
+    if (parentDatasetSelect) parentDatasetSelect.required = true;
+    if (!parentDatasetsLoaded) loadParentDatasets();
+  }
+}
+
+async function loadParentSamples() {
+  try {
+    const r = await fetch('/api/parent-samples');
+    const j = await r.json();
+    if (!j || !j.success || !Array.isArray(j.samples)) return;
+
+    const select = document.getElementById('parent_sample');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">-- Select Parent Sample --</option>';
+    j.samples.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.name;
+      opt.textContent = s.name;
+      select.appendChild(opt);
+    });
+
+    parentSamplesLoaded = true;
+  } catch (e) {
+    console.warn('Error loading parent samples:', e);
+  }
+}
+
+async function loadParentDatasets() {
+  try {
+    const r = await fetch('/api/parent-datasets');
+    const j = await r.json();
+    if (!j || !j.success || !Array.isArray(j.datasets)) return;
+
+    const select = document.getElementById('parent_dataset');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">-- Select Parent Dataset --</option>';
+    j.datasets.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = (d.id !== undefined && d.id !== null) ? String(d.id) : d.name;
+      opt.textContent = d.name;
+      select.appendChild(opt);
+    });
+
+    parentDatasetsLoaded = true;
+  } catch (e) {
+    console.warn('Error loading parent datasets:', e);
+  }
+}
+
+document.getElementById('parent_entry')?.addEventListener('change', (e) => {
+  setParentEntryUI(e.target.value);
+});
+
+/* =========================================================
+   Data Type toggle (Link vs File)
+========================================================= */
+function setDataTypeUI(type) {
+  const linkSection = document.getElementById('linkSection');
+  const fileSection = document.getElementById('fileSection');
+
+  const linkInput = document.getElementById('data_link');
+  const fileInput = document.getElementById('bigFile');
+
+  linkSection.style.display = (type === 'link') ? 'block' : 'none';
+  fileSection.style.display = (type === 'file') ? 'block' : 'none';
+
+  // Required rules
+  linkInput.required = (type === 'link');
+  fileInput.required = (type === 'file');
+}
+
+document.getElementById('data_type').addEventListener('change', (e) => {
+  setDataTypeUI(e.target.value);
+});
+
+/* =========================================================
+   Sources logic (unchanged)
+========================================================= */
+let selectedSources = [];
+let sourceFormCounter = 0;
+
+function addExistingSource() {
+  const select = document.getElementById('existing_source_select');
+  const sourceName = select.value;
+  if (!sourceName) return;
+
+  if (selectedSources.some(s => s.name === sourceName && s.type === 'existing')) {
+    alert('This source is already selected');
+    select.value = '';
+    return;
+  }
+
+  selectedSources.push({ type: 'existing', name: sourceName });
+  updateSelectedSourcesList();
+  updateSourcesHiddenInput();
+  select.value = '';
+}
+
+function addNewSourceForm() {
+  sourceFormCounter++;
+  const formId = `source_form_${sourceFormCounter}`;
+
+  const formHTML = `
+    <div class="person-form" id="${formId}">
+      <div class="person-form-header">
+        <div class="person-form-title">New Source #${sourceFormCounter}</div>
+        <button type="button" class="remove-form-btn" onclick="removeSourceForm('${formId}')">×</button>
+      </div>
+
+      <div class="form-group">
+        <label>Name and Surname <span class="required">*</span></label>
+        <input type="text" class="source-name-input" placeholder="Enter full name" required>
+      </div>
+
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" class="source-email-input" placeholder="Enter email address">
+      </div>
+
+      <div class="form-group">
+        <label>Affiliation</label>
+        <input type="text" class="source-affiliation-input" placeholder="Enter affiliation">
+      </div>
+
+      <button type="button" class="btn btn-primary btn-small" onclick="saveNewSource('${formId}')">Save Source</button>
+    </div>
+  `;
+
+  document.getElementById('newSourceFormsContainer').insertAdjacentHTML('beforeend', formHTML);
+}
+
+function saveNewSource(formId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+
+  const name = (form.querySelector('.source-name-input')?.value || '').trim();
+  const email = (form.querySelector('.source-email-input')?.value || '').trim();
+  const affiliation = (form.querySelector('.source-affiliation-input')?.value || '').trim();
+
+  if (!name) {
+    alert('Name and Surname is required');
+    return;
+  }
+
+  if (selectedSources.some(s => s.name === name)) {
+    alert('A source with this name is already selected');
+    return;
+  }
+
+  selectedSources.push({
+    type: 'new',
+    name,
+    email: email || null,
+    affiliation: affiliation || null
+  });
+
+  updateSelectedSourcesList();
+  updateSourcesHiddenInput();
+  form.remove();
+}
+
+function removeSourceForm(formId) {
+  document.getElementById(formId)?.remove();
+}
+
+function removeSource(index) {
+  selectedSources.splice(index, 1);
+  updateSelectedSourcesList();
+  updateSourcesHiddenInput();
+}
+
+function updateSelectedSourcesList() {
+  const container = document.getElementById('selectedSourcesList');
+
+  if (selectedSources.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        No sources selected yet. Select from list or add new source.
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = selectedSources.map((source, index) => {
+    const chipClass = source.type === 'existing' ? 'from-list' : 'new-person';
+    const label = source.type === 'existing' ? source.name : `${source.name} (New)`;
+    return `
+      <span class="person-chip ${chipClass}">
+        ${escapeHtml(label)}
+        <span class="person-chip-remove" onclick="removeSource(${index})">×</span>
+      </span>
+    `;
+  }).join('');
+}
+
+function updateSourcesHiddenInput() {
+  document.getElementById('sources_data').value = JSON.stringify(selectedSources);
+}
+
+/* wire up controls */
+document.getElementById('existing_source_select').addEventListener('change', addExistingSource);
+document.getElementById('addSourceBtn').addEventListener('click', addNewSourceForm);
+
+/* =========================================================
+   OneDrive upload helpers (unchanged)
+========================================================= */
+let lastUploadSession = null;
+
+function setUploadStatus(type, text) {
+  const el = document.getElementById('uploadStatus');
+  el.className = 'message ' + (type === 'success' ? 'success' : (type === 'error' ? 'error' : ''));
+  el.style.display = 'block';
+  el.textContent = text;
+}
+
+async function createUploadSession(file) {
+  const entryName = document.getElementById('name').value.trim() || 'data_entry';
+  const payload = {
+    filename: file.name,
+    size: file.size,
+    mime: file.type || 'application/octet-stream',
+    entry_name: entryName
+  };
+
+  const r = await fetch('/api/create-upload-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error('create-upload-session failed: ' + t);
+  }
+
+  return await r.json();
+}
+
+async function uploadToOneDriveSimplePUT(uploadUrl, file) {
+  const r = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: file
+  });
+
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error('OneDrive upload failed: ' + t);
+  }
+  return true;
+}
+
+async function uploadFileToOneDrive({
+  file,
+  uploadUrl,
+  onProgress = () => {},
+  chunkSize = 5 * 1024 * 1024, // 5 MB
+  maxRetries = 5
+}) {
+  if (!file || !uploadUrl) {
+    throw new Error('file and uploadUrl are required');
+  }
+
+  const fileSize = file.size;
+
+  // =========================
+  // SMALL FILE (<30MB): single PUT
+  // =========================
+  if (fileSize < 30 * 1024 * 1024) {
+    const r = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: file
+    });
+    
+    if (!r.ok) {
+      throw new Error(`Upload failed: ${await r.text()}`);
+    }
+
+    const item = await r.json(); // contains id + webUrl
+    onProgress(fileSize, fileSize);
+    return item;
+
+    // if (!r.ok) {
+    //   throw new Error(`Upload failed: ${await r.text()}`);
+    // }
+
+    // onProgress(fileSize, fileSize);
+    // return true;
+  }
+  
+
+  // =========================
+  // LARGE FILE: chunked upload
+  // =========================
+  let uploadedBytes = 0;
+
+  while (uploadedBytes < fileSize) {
+    const end = Math.min(uploadedBytes + chunkSize, fileSize);
+    const chunk = file.slice(uploadedBytes, end);
+
+    const headers = {
+      'Content-Length': chunk.size.toString(),
+      'Content-Range': `bytes ${uploadedBytes}-${end - 1}/${fileSize}`
+    };
+
+    let success = false;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const r = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers,
+          body: chunk
+        });
+
+        // // 202 = accepted, 201/200 = completed
+        // if ([200, 201, 202].includes(r.status)) {
+        //   uploadedBytes = end;
+        //   onProgress(uploadedBytes, fileSize);
+        //   success = true;
+        //   break;
+        // } else {
+        //   throw new Error(`Unexpected status ${r.status}`);
+        // }
+        if (r.status === 200 || r.status === 201) {
+          // FINAL RESPONSE — contains id + webUrl
+          const item = await r.json();
+          onProgress(fileSize, fileSize);
+          return item;
+        }
+
+        if (r.status === 202) {
+          uploadedBytes = end;
+          onProgress(uploadedBytes, fileSize);
+          success = true;
+          break;
+        }
+
+      } catch (err) {
+        if (attempt === maxRetries) {
+          throw new Error(
+            `Chunk upload failed after ${maxRetries} retries: ${err.message}`
+          );
+        }
+        console.warn(`Chunk retry ${attempt}/${maxRetries}`);
+        await new Promise(r => setTimeout(r, attempt * 2000));
+      }
+    }
+
+    if (!success) {
+      throw new Error('Chunk upload failed');
+    }
+  }
+
+  return true;
+}
+
+
+/* =========================================================
+   ✅ CHANGED: file selection now only STAGES the file (no upload)
+========================================================= */
+document.getElementById('bigFile').addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+
+  pendingFile = file || null;
+  lastUploadSession = null;
+
+  // Clear any old OneDrive fields (because we have a new staged file)
+  document.getElementById('onedrive_path').value = '';
+  document.getElementById('onedrive_item_id').value = '';
+
+  if (!file) {
+    setUploadStatus('', 'No file selected.');
+    return;
+  }
+
+  // store metadata for backend record
+  document.getElementById('file_name').value = file.name;
+  document.getElementById('file_size').value = String(file.size);
+  document.getElementById('file_type').value = file.type || '';
+
+  setUploadStatus('', `Selected file: ${file.name} (${Math.round(file.size / 1024 / 1024)} MB). Upload will start on Submit.`);
+});
+
+/* =========================================================
+   ✅ CHANGED: Submit now triggers OneDrive upload (if Data Type = file)
+========================================================= */
+document.getElementById('dataForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const submitBtn = document.getElementById('submitBtn');
+  const messageDiv = document.getElementById('message');
+  messageDiv.style.display = 'none';
+
+  // Parent Entry validation (conditional)
+  const parentEntry = document.getElementById('parent_entry')?.value || '';
+  if (parentEntry === 'sample') {
+    const ps = document.getElementById('parent_sample')?.value || '';
+    if (!ps) {
+      messageDiv.className = 'message error';
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '✗ Parent Sample is required when Parent Entry is set to sample.';
+      return;
+    }
+  } else if (parentEntry === 'dataset') {
+    const pd = document.getElementById('parent_dataset')?.value || '';
+    if (!pd) {
+      messageDiv.className = 'message error';
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '✗ Parent Dataset is required when Parent Entry is set to dataset.';
+      return;
+    }
+  }
+
+  const dataType = document.getElementById('data_type').value;
+  if (!dataType) {
+    messageDiv.className = 'message error';
+    messageDiv.style.display = 'block';
+    messageDiv.textContent = '✗ Please select Data Type (Link or File).';
+    return;
+  }
+
+  if (dataType === 'link') {
+    const link = document.getElementById('data_link').value.trim();
+    if (!link) {
+      messageDiv.className = 'message error';
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '✗ Link is required.';
+      return;
+    }
+  }
+
+  /* ✅ If file: upload NOW (on submit) */
+  if (dataType === 'file') {
+    if (!pendingFile) {
+      messageDiv.className = 'message error';
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '✗ File is required.';
+      return;
+    }
+
+    try {
+      setUploadStatus('', 'Preparing OneDrive upload session…');
+      const session = await createUploadSession(pendingFile);
+      lastUploadSession = session;
+
+      if (!session || !session.upload_url) {
+        throw new Error('Backend did not return upload_url');
+      }
+
+      
+
+      setUploadStatus('', 'Uploading to OneDrive…');
+      //await uploadToOneDriveSimplePUT(session.upload_url, pendingFile);
+      const item = await uploadFileToOneDrive({
+        file: pendingFile,
+        uploadUrl: session.upload_url,
+        onProgress: (uploaded, total) => {
+          const percent = Math.round((uploaded / total) * 100);
+          setUploadStatus('', `Uploading… ${percent}%`);
+        }
+      });
+
+      document.getElementById('onedrive_item_id').value = item.id || '';
+      document.getElementById('onedrive_path').value = item.webUrl || '';
+
+      // await uploadFileToOneDrive({
+      //   file: pendingFile,
+      //   uploadUrl: session.upload_url,
+      //   onProgress: (uploaded, total) => {
+      //     const percent = Math.round((uploaded / total) * 100);
+      //     setUploadStatus('', `Uploading… ${percent}%`);
+      //   }
+      // });
+
+      // document.getElementById('onedrive_path').value = session.onedrive_path || '';
+      // document.getElementById('onedrive_item_id').value = session.item_id || '';
+
+      setUploadStatus('success', 'Upload completed ✔');
+    } catch (err) {
+      console.error(err);
+      document.getElementById('onedrive_path').value = '';
+      document.getElementById('onedrive_item_id').value = '';
+      lastUploadSession = null;
+
+      setUploadStatus('error', 'Upload failed: ' + err.message);
+
+      // stop submit if upload failed
+      messageDiv.className = 'message error';
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '✗ Upload failed. Fix the issue and try Submit again.';
+      return;
+    }
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = '⏳ Submitting…';
+
+  try {
+    const formData = new FormData(e.target);
+
+    const r = await fetch('/api/submit-data', {
+      method: 'POST',
+      body: formData
+    });
+
+    const j = await r.json().catch(() => ({}));
+
+    messageDiv.style.display = 'block';
+    if (r.ok && j.success) {
+      messageDiv.className = 'message success';
+      messageDiv.textContent = '✓ ' + (j.message || 'Data entry saved successfully');
+
+      // reset UI
+      e.target.reset();
+      setParentEntryUI('');
+      selectedSources = [];
+      sourceFormCounter = 0;
+      updateSelectedSourcesList();
+      updateSourcesHiddenInput();
+      document.getElementById('newSourceFormsContainer').innerHTML = '';
+      setDataTypeUI('');
+      setUploadStatus('', 'No file selected.');
+      document.getElementById('onedrive_path').value = '';
+      document.getElementById('onedrive_item_id').value = '';
+      lastUploadSession = null;
+      pendingFile = null;
+    } else {
+      messageDiv.className = 'message error';
+      messageDiv.textContent = '✗ ' + (j.error || 'Submission failed');
+    }
+  } catch (err) {
+    messageDiv.style.display = 'block';
+    messageDiv.className = 'message error';
+    messageDiv.textContent = '✗ Error: ' + err.message;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = '✓ Submit';
+  }
+});
+
+/* Reset behavior (restore UI sections) */
+document.getElementById('resetBtn').addEventListener('click', () => {
+  setParentEntryUI('');
+  selectedSources = [];
+  sourceFormCounter = 0;
+  updateSelectedSourcesList();
+  updateSourcesHiddenInput();
+  document.getElementById('newSourceFormsContainer').innerHTML = '';
+  setDataTypeUI('');
+  setUploadStatus('', 'No file selected.');
+  document.getElementById('onedrive_path').value = '';
+  document.getElementById('onedrive_item_id').value = '';
+  lastUploadSession = null;
+  pendingFile = null;
+
+  selectedCharacterisation = [];
+  updateSelectedCharacterisationList();
+  updateCharacterisationHiddenInput();
+
+});
+
+/* =========================================================
+   Init
+========================================================= */
+window.addEventListener('DOMContentLoaded', async () => {
+  await loadOptions();
+  setParentEntryUI('');
+  setDataTypeUI('');
+  updateSelectedSourcesList();
+  updateSourcesHiddenInput();
+  setUploadStatus('', 'No file selected.');
+});
+</script>
+</body>
+</html>

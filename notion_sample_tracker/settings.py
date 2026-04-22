@@ -25,6 +25,7 @@ def _optional(name: str, default: str = "") -> str:
 class Settings:
     app_secret_key: str
     public_base_url: str
+    notion_home_url: str
     notion_token: str
     notion_samples_database_id: str
     notion_results_database_id: str
@@ -42,6 +43,7 @@ class Settings:
         return cls(
             app_secret_key=_optional("APP_SECRET_KEY", "dev-only-change-me"),
             public_base_url=_optional("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),
+            notion_home_url=_optional("NOTION_HOME_URL", ""),
             notion_token=_required("NOTION_TOKEN"),
             notion_samples_database_id=_required("NOTION_SAMPLES_DATABASE_ID"),
             notion_results_database_id=_required("NOTION_RESULTS_DATABASE_ID"),
@@ -54,4 +56,3 @@ class Settings:
             backlog_dir=Path(_optional("BACKLOG_DIR", "./backlog")),
             max_upload_mb=int(_optional("MAX_UPLOAD_MB", "200")),
         )
-

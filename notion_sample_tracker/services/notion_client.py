@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
 from notion_client import Client
@@ -23,11 +22,21 @@ class NotionRepository:
     def list_results(self) -> list[dict[str, str]]:
         return self._list_titles(self.results_db)
 
+    def get_options(self) -> dict[str, list[str]]:
+        char_property = self._first_existing_property(self.results_db, ["Characterisation", "Characterization"])
+        return {
+            "synthesis": self._database_property_options(self.samples_db, "Synthesis", "multi_select"),
+            "processing": self._database_property_options(self.samples_db, "Processing", "multi_select"),
+            "source": [item["name"] for item in self._list_titles(self.people_db)],
+            "entry_type": self._database_property_options(self.results_db, "Data Type", "select"),
+            "char_data": self._database_property_options(self.results_db, char_property, "multi_select") if char_property else [],
+        }
+
     def create_sample(self, form: SampleForm) -> dict[str, Any]:
         parsed = self._parse_sample_formula(form)
         source_relations = self._source_relations(form.sources)
         properties = self._sample_properties(form, parsed, source_relations)
-        return self.client.pages.create(parent={"database_id": self.samples_db}, properties=properties)
+        return self._create_page(self.samples_db, properties)
 
     def update_sample(self, page_id: str, form: SampleForm) -> dict[str, Any]:
         parsed = self._parse_sample_formula(form)
@@ -38,7 +47,7 @@ class NotionRepository:
     def create_result(self, form: ResultForm) -> dict[str, Any]:
         source_relations = self._source_relations(form.sources)
         properties = self._result_properties(form, source_relations)
-        return self.client.pages.create(parent={"database_id": self.results_db}, properties=properties)
+        return self._create_page(self.results_db, properties)
 
     def update_result(self, page_id: str, form: ResultForm) -> dict[str, Any]:
         source_relations = self._source_relations(form.sources)
@@ -70,7 +79,14 @@ class NotionRepository:
             properties["Composition"] = {"rich_text": [{"text": {"content": parsed.normalized_formula}}]}
             properties["Elements"] = {"multi_select": [{"name": element} for element in parsed.elements]}
         if form.parent_sample_id:
-            properties["Parent Sample"] = {"relation": [{"id": form.parent_sample_id}]}
+            parent_id = self._resolve_page_id(self.samples_db, form.parent_sample_id)
+            properties["Parent Sample"] = {"relation": [{"id": parent_id}]}
+            if not parsed:
+                parent_page = self.client.pages.retrieve(page_id=parent_id)
+                for property_name in ("Composition", "Elements"):
+                    parent_property = parent_page.get("properties", {}).get(property_name)
+                    if parent_property:
+                        properties[property_name] = self._page_property_value(parent_property)
         if form.synthesis:
             properties["Synthesis"] = self._multi_select(form.synthesis)
         if form.synthesis_details:
@@ -88,10 +104,17 @@ class NotionRepository:
         return properties
 
     def _result_properties(self, form: ResultForm, source_relations: list[dict]) -> dict[str, Any]:
+        sample_id = self._resolve_page_id(self.samples_db, form.sample_id) if form.sample_id else ""
+        related_result_id = self._resolve_page_id(self.results_db, form.related_result_id) if form.related_result_id else ""
+        sample_relation = [{"id": sample_id}] if sample_id else []
+        if not sample_relation and related_result_id:
+            sample_relation = self._relation_from_page(related_result_id, "Sample")
+
         properties: dict[str, Any] = {
             "Name": {"title": [{"text": {"content": form.name}}]},
-            "Sample": {"relation": [{"id": form.sample_id}]},
         }
+        if sample_relation:
+            properties["Sample"] = {"relation": sample_relation}
         if form.data_type:
             properties["Data Type"] = {"select": {"name": form.data_type}}
         if form.upload_method:
@@ -99,11 +122,12 @@ class NotionRepository:
         if form.description:
             properties["Brief Description"] = self._rich_text(form.description)
         if form.characterization:
-            properties["Characterization"] = self._multi_select(form.characterization)
+            char_property = self._first_existing_property(self.results_db, ["Characterisation", "Characterization"]) or "Characterization"
+            properties[char_property] = self._multi_select(form.characterization)
         if form.link:
             properties["Link"] = {"url": form.link}
-        if form.related_result_id:
-            properties["Related Results"] = {"relation": [{"id": form.related_result_id}]}
+        if related_result_id:
+            properties["Related Results"] = {"relation": [{"id": related_result_id}]}
         if source_relations:
             properties["Source"] = {"relation": source_relations}
         return properties
@@ -132,31 +156,93 @@ class NotionRepository:
             properties["Email"] = {"email": person.email}
         if person.affiliation:
             properties["Affiliation"] = self._rich_text(person.affiliation)
-        return self.client.pages.create(parent={"database_id": self.people_db}, properties=properties)
+        return self._create_page(self.people_db, properties)
+
+    def _resolve_page_id(self, database_id: str, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        if "-" in value and len(value) >= 32:
+            return value
+        existing = self._find_by_any_title(database_id, value)
+        if not existing:
+            raise ValueError(f"Could not find Notion page named '{value}'")
+        return existing["id"]
 
     def _find_by_title(self, database_id: str, property_name: str, title: str) -> dict[str, Any] | None:
-        response = self.client.databases.query(
-            database_id=database_id,
-            filter={"property": property_name, "title": {"equals": title}},
-            page_size=1,
-        )
+        response = self._query_collection(database_id, filter={"property": property_name, "title": {"equals": title}}, page_size=1)
         results = response.get("results", [])
         return results[0] if results else None
+
+    def _find_by_any_title(self, database_id: str, title: str) -> dict[str, Any] | None:
+        title_property = self._title_property_name(database_id)
+        return self._find_by_title(database_id, title_property, title)
 
     def _list_titles(self, database_id: str) -> list[dict[str, str]]:
         pages: list[dict[str, Any]] = []
         cursor = None
         while True:
-            kwargs: dict[str, Any] = {"database_id": database_id, "page_size": 100}
+            kwargs: dict[str, Any] = {"page_size": 100}
             if cursor:
                 kwargs["start_cursor"] = cursor
-            response = self.client.databases.query(**kwargs)
+            response = self._query_collection(database_id, **kwargs)
             pages.extend(response.get("results", []))
             if not response.get("has_more"):
                 break
             cursor = response.get("next_cursor")
 
         return [{"id": page["id"], "name": self._title_from_page(page)} for page in pages]
+
+    def _database_property_options(self, database_id: str, property_name: str, property_type: str) -> list[str]:
+        database = self._retrieve_collection(database_id)
+        prop = database.get("properties", {}).get(property_name)
+        if not prop or prop.get("type") != property_type:
+            return []
+        return [item["name"] for item in prop[property_type].get("options", [])]
+
+    def _first_existing_property(self, database_id: str, names: list[str]) -> str:
+        database = self._retrieve_collection(database_id)
+        properties = database.get("properties", {})
+        for name in names:
+            if name in properties:
+                return name
+        return ""
+
+    def _title_property_name(self, database_id: str) -> str:
+        database = self._retrieve_collection(database_id)
+        for name, prop in database.get("properties", {}).items():
+            if prop.get("type") == "title":
+                return name
+        return "Name"
+
+    def _relation_from_page(self, page_id: str, property_name: str) -> list[dict[str, str]]:
+        page = self.client.pages.retrieve(page_id=page_id)
+        relation = page.get("properties", {}).get(property_name, {}).get("relation", [])
+        return [{"id": item["id"]} for item in relation if item.get("id")]
+
+    def _query_collection(self, collection_id: str, **kwargs) -> dict[str, Any]:
+        if hasattr(self.client, "data_sources"):
+            try:
+                return self.client.data_sources.query(data_source_id=collection_id, **kwargs)
+            except Exception:
+                pass
+        return self.client.databases.query(database_id=collection_id, **kwargs)
+
+    def _retrieve_collection(self, collection_id: str) -> dict[str, Any]:
+        if hasattr(self.client, "data_sources"):
+            try:
+                return self.client.data_sources.retrieve(data_source_id=collection_id)
+            except Exception:
+                pass
+        return self.client.databases.retrieve(database_id=collection_id)
+
+    def _create_page(self, collection_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        if hasattr(self.client, "data_sources"):
+            try:
+                return self.client.pages.create(parent={"data_source_id": collection_id}, properties=properties)
+            except Exception:
+                pass
+        return self.client.pages.create(parent={"database_id": collection_id}, properties=properties)
 
     @staticmethod
     def _title_from_page(page: dict[str, Any]) -> str:
@@ -172,3 +258,10 @@ class NotionRepository:
     @staticmethod
     def _multi_select(values: list[str]) -> dict[str, Any]:
         return {"multi_select": [{"name": value} for value in values]}
+
+    @staticmethod
+    def _page_property_value(property_value: dict[str, Any]) -> dict[str, Any]:
+        property_type = property_value.get("type")
+        if property_type and property_type in property_value:
+            return {property_type: property_value[property_type]}
+        return property_value
