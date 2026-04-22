@@ -75,7 +75,7 @@ The services intentionally keep property names centralized in `settings.py`, so 
 - `notion_sample_tracker/services/backlog.py` - local JSONL audit log
 - `notion_sample_tracker/templates/` - deployable web forms
 
-Set `NOTION_HOME_URL` in production if `/` should redirect to your main Notion page. Put links on that Notion page to `/samples/new` and `/results/new` on the deployed app domain.
+Set `NOTION_HOME_URL` in production if `/` should redirect to your main Notion page. The older `NOTION_PAGE` variable name is also supported. Put links on that Notion page to `/samples/new` and `/results/new` on the deployed app domain.
 
 Set `ONEDRIVE_DRIVE_ID` in production. The app uses Microsoft Graph client-credentials auth, so uploads target `/drives/{ONEDRIVE_DRIVE_ID}` rather than `/me/drive`.
 

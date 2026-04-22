@@ -43,7 +43,7 @@ class Settings:
         return cls(
             app_secret_key=_optional("APP_SECRET_KEY", "dev-only-change-me"),
             public_base_url=_optional("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),
-            notion_home_url=_optional("NOTION_HOME_URL", ""),
+            notion_home_url=_optional("NOTION_HOME_URL", "") or _optional("NOTION_PAGE", ""),
             notion_token=_required("NOTION_TOKEN"),
             notion_samples_database_id=_required("NOTION_SAMPLES_DATABASE_ID"),
             notion_results_database_id=_required("NOTION_RESULTS_DATABASE_ID"),
