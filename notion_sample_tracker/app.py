@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -40,8 +41,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
     @app.get("/")
     def index():
-        if settings.notion_home_url:
-            return redirect(settings.notion_home_url)
+        notion_home_url = _notion_home_url(settings)
+        if notion_home_url:
+            return redirect(notion_home_url)
         return render_template("index.html")
 
     @app.get("/add_sample")
@@ -289,7 +291,13 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
     @app.get("/health")
     def health():
-        return {"status": "ok"}
+        notion_home_url = _notion_home_url(settings)
+        return {
+            "status": "ok",
+            "notion_home_configured": bool(notion_home_url),
+            "notion_home_url_host": _url_host(notion_home_url),
+            "public_base_url": settings.public_base_url,
+        }
 
     return app
 
@@ -319,3 +327,17 @@ def _form_payload(form) -> dict:
 def _safe_segment(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value or "").strip())
     return cleaned or "entry"
+
+
+def _notion_home_url(settings: Settings) -> str:
+    return (
+        os.getenv("NOTION_HOME_URL", "").strip()
+        or os.getenv("NOTION_PAGE", "").strip()
+        or settings.notion_home_url.strip()
+    )
+
+
+def _url_host(url: str) -> str:
+    if "://" not in url:
+        return ""
+    return url.split("://", 1)[1].split("/", 1)[0]
