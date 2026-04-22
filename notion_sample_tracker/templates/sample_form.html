@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="panel" method="post" action="{{ url_for('create_sample') if mode == 'create' else url_for('update_sample', page_id=page_id) }}">
+  <h1>{{ "Create Sample" if mode == "create" else "Revise Sample" }}</h1>
+  <div class="grid two">
+    <label>Name <input name="name" required value="{{ sample.name if sample else '' }}"></label>
+    <label>Sample Type
+      <select name="sample_type" required>
+        <option value="Root Sample">Root Sample</option>
+        <option value="Sub-Sample">Sub-Sample</option>
+      </select>
+    </label>
+  </div>
+  <label>Composition <input name="composition" placeholder="Fe2O3 or (Fe0.5Ni0.5)O" value="{{ sample.composition if sample else '' }}"></label>
+  <label>Parent Sample
+    <select name="parent_sample_id">
+      <option value="">None</option>
+      {% for item in samples %}
+        <option value="{{ item.id }}">{{ item.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="grid two">
+    <label>Synthesis <input name="synthesis" placeholder="Casting,Sputter" value="{{ sample.synthesis | join(',') if sample else '' }}"></label>
+    <label>Status <input name="status" placeholder="Active, Archived, Planned" value="{{ sample.status if sample else '' }}"></label>
+  </div>
+  <label>Synthesis Details <textarea name="synthesis_details">{{ sample.synthesis_details if sample else '' }}</textarea></label>
+  <div class="grid two">
+    <label>Processing <input name="processing" placeholder="Radiation,Heat Treatment" value="{{ sample.processing | join(',') if sample else '' }}"></label>
+    <label>Location <input name="location" value="{{ sample.location if sample else '' }}"></label>
+  </div>
+  <label>Processing Details <textarea name="processing_details">{{ sample.processing_details if sample else '' }}</textarea></label>
+  <section class="subpanel">
+    <h2>Source / Person</h2>
+    <div class="grid three">
+      <label>Name <input name="source_name"></label>
+      <label>Email <input name="source_email" type="email"></label>
+      <label>Affiliation <input name="source_affiliation"></label>
+    </div>
+  </section>
+  <button class="button primary" type="submit">{{ "Create Sample" if mode == "create" else "Save Revision" }}</button>
+</form>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="workspace">
+  <div>
+    <h1>Sample and Data Intake</h1>
+    <p>Create or revise Notion records, archive snapshots to OneDrive, and keep a local recovery backlog.</p>
+  </div>
+  <div class="actions">
+    <a class="button primary" href="{{ url_for('new_sample') }}">Create Sample</a>
+    <a class="button" href="{{ url_for('new_result') }}">Create Data Entry</a>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notion-sample-tracker"
+version = "0.1.0"
+description = "Notion-centered sample and data entry tracker with web forms, OneDrive archival, and chemistry formula parsing."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "Flask>=3.0",
+    "gunicorn>=21.2",
+    "notion-client>=2.2",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "qrcode[pil]>=7.4",
+    "monty>=2023.9.25",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["notion_sample_tracker*"]
+
+[tool.setuptools.package-data]
+"notion_sample_tracker.periodictable" = ["*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["..", "."]

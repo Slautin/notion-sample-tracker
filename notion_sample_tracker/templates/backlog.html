@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Backlog</h1>
+  <h2>Samples</h2>
+  <pre>{{ samples | tojson(indent=2) }}</pre>
+  <h2>Results</h2>
+  <pre>{{ results | tojson(indent=2) }}</pre>
+</section>
+{% endblock %}

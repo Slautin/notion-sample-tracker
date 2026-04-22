@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<form class="panel" method="post" enctype="multipart/form-data" action="{{ url_for('create_result') if mode == 'create' else url_for('update_result', page_id=page_id) }}">
+  <h1>{{ "Create Data Entry" if mode == "create" else "Revise Data Entry" }}</h1>
+  <label>Name <input name="name" required value="{{ result.name if result else '' }}"></label>
+  <label>Sample
+    <select name="sample_id" required>
+      <option value="">Select a sample</option>
+      {% for item in samples %}
+        <option value="{{ item.id }}">{{ item.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="grid two">
+    <label>Data Type <input name="data_type" placeholder="XRD, SEM, Dataset" value="{{ result.data_type if result else '' }}"></label>
+    <label>Upload Method
+      <select name="upload_method">
+        <option value="file">File</option>
+        <option value="link">Link</option>
+      </select>
+    </label>
+  </div>
+  <label>Characterization <input name="characterization" placeholder="XRD,SEM" value="{{ result.characterization | join(',') if result else '' }}"></label>
+  <label>Link <input name="link" type="url" value="{{ result.link if result else '' }}"></label>
+  <label>Files <input name="files" type="file" multiple></label>
+  <label>Related Result
+    <select name="related_result_id">
+      <option value="">None</option>
+      {% for item in results %}
+        <option value="{{ item.id }}">{{ item.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Description <textarea name="description">{{ result.description if result else '' }}</textarea></label>
+  <section class="subpanel">
+    <h2>Source / Person</h2>
+    <div class="grid three">
+      <label>Name <input name="source_name"></label>
+      <label>Email <input name="source_email" type="email"></label>
+      <label>Affiliation <input name="source_affiliation"></label>
+    </div>
+  </section>
+  <button class="button primary" type="submit">{{ "Create Data Entry" if mode == "create" else "Save Revision" }}</button>
+</form>
+{% endblock %}
