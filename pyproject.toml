@@ -17,6 +17,7 @@ dependencies = [
     "qrcode[pil]>=7.4",
     "monty>=2023.9.25",
     "numpy>=1.24",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]
