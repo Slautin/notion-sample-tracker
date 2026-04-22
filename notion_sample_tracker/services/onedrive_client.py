@@ -49,7 +49,7 @@ class OneDriveClient:
         token = self._access_token()
         path = self._remote_path(relative_path)
         self._ensure_parent_folders(token, path)
-        url = f"{self._drive_base()}/root:/{quote(path)}:/content"
+        url = f"{self._drive_base()}/root:/{self._quote_path(path)}:/content"
         response = requests.put(
             url,
             headers={
@@ -67,7 +67,7 @@ class OneDriveClient:
         token = self._access_token()
         path = self._remote_path(relative_path)
         self._ensure_parent_folders(token, path)
-        url = f"{self._drive_base()}/root:/{quote(path)}:/createUploadSession"
+        url = f"{self._drive_base()}/root:/{self._quote_path(path)}:/createUploadSession"
         response = requests.post(
             url,
             headers={"Authorization": f"Bearer {token}"},
@@ -98,7 +98,7 @@ class OneDriveClient:
             self._create_folder(token, parent_path, part)
 
     def _path_exists(self, token: str, path: str) -> bool:
-        url = f"{self._drive_base()}/root:/{quote(path)}"
+        url = f"{self._drive_base()}/root:/{self._quote_path(path)}:"
         response = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=self.timeout)
         if response.status_code == 404:
             return False
@@ -107,7 +107,7 @@ class OneDriveClient:
 
     def _create_folder(self, token: str, parent_path: str, name: str) -> None:
         if parent_path:
-            url = f"{self._drive_base()}/root:/{quote(parent_path)}:/children"
+            url = f"{self._drive_base()}/root:/{self._quote_path(parent_path)}:/children"
         else:
             url = f"{self._drive_base()}/root/children"
         response = requests.post(
@@ -123,6 +123,10 @@ class OneDriveClient:
         if response.status_code == 409:
             return
         response.raise_for_status()
+
+    @staticmethod
+    def _quote_path(path: str) -> str:
+        return "/".join(quote(part, safe="") for part in path.strip("/").split("/") if part)
 
     def _access_token(self) -> str:
         url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
