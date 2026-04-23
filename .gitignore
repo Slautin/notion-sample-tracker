@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 backlog/*.jsonl
 uploads/
+/ms_graph_api_token.json
