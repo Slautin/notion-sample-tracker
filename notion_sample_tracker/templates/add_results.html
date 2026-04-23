@@ -895,35 +895,7 @@ async function uploadFileToOneDrive({
 
   const fileSize = file.size;
 
-  // =========================
-  // SMALL FILE (<30MB): single PUT
-  // =========================
-  if (fileSize < 30 * 1024 * 1024) {
-    const r = await fetch(uploadUrl, {
-      method: 'PUT',
-      body: file
-    });
-    
-    if (!r.ok) {
-      throw new Error(`Upload failed: ${await r.text()}`);
-    }
-
-    const item = await r.json(); // contains id + webUrl
-    onProgress(fileSize, fileSize);
-    return item;
-
-    // if (!r.ok) {
-    //   throw new Error(`Upload failed: ${await r.text()}`);
-    // }
-
-    // onProgress(fileSize, fileSize);
-    // return true;
-  }
-  
-
-  // =========================
-  // LARGE FILE: chunked upload
-  // =========================
+  // Upload-session URLs require Content-Range headers, even for small files.
   let uploadedBytes = 0;
 
   while (uploadedBytes < fileSize) {
