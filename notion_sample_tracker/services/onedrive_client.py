@@ -173,8 +173,20 @@ class OneDriveClient:
             },
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        self._raise_for_graph_token_error(response)
         token = response.json()
         self.refresh_token = token.get("refresh_token", self.refresh_token)
         self._delegated_access_token = token["access_token"]
         return self._delegated_access_token
+
+    @staticmethod
+    def _raise_for_graph_token_error(response: requests.Response) -> None:
+        if response.ok:
+            return
+        try:
+            payload = response.json()
+        except ValueError:
+            response.raise_for_status()
+        error = payload.get("error", "token_error")
+        description = payload.get("error_description", response.text)
+        raise RuntimeError(f"Microsoft token request failed: {error}: {description}")
