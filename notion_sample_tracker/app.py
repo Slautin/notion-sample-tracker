@@ -253,38 +253,73 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     @app.post("/api/submit-data")
     def api_submit_result():
         form = ResultForm.from_form(request.form)
-        backlog.append(BacklogEvent(action="create", entity="result", payload=_form_payload(request.form)))
+        raw_form = _form_payload(request.form)
+        backlog.append(BacklogEvent(action="create", entity="result", payload=raw_form))
+        page: dict | None = None
+        artifact_errors: list[str] = []
+        onedrive_paths: list[str] = []
         try:
             started = time.perf_counter()
             page = notion.create_result(form)
-            app_log("notion_result_created", seconds=round(time.perf_counter() - started, 3))
-            result_folder = f"{_result_parent_folder(notion, form)}/results/{_safe_segment(form.name)}"
-            qr_name = f"{_safe_segment(form.name)}_qr.png"
+            app_log("notion_result_created", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
+        except Exception as exc:
+            app_log("result_submission_failed", stage="notion_create", error=str(exc), form=raw_form)
+            backlog.append(BacklogEvent(action="create", entity="result", payload=form.to_dict(), status="failed", error=f"notion_create: {exc}"))
+            return jsonify({"success": False, "stage": "notion_create", "error": str(exc)}), 400
+
+        result_folder = f"{_result_parent_folder(notion, form)}/results/{_safe_segment(form.name)}"
+        qr_name = f"{_safe_segment(form.name)}_qr.png"
+        qr_path = ""
+        try:
             qr_bytes = make_qr_png_bytes(page["url"])
             started = time.perf_counter()
             qr_upload = onedrive.upload_bytes(f"{result_folder}/{qr_name}", qr_bytes, "image/png")
+            qr_path = qr_upload.path
+            onedrive_paths.append(qr_upload.path)
             notion.set_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
-            app_log("result_qr_uploaded", seconds=round(time.perf_counter() - started, 3))
+            app_log("result_qr_uploaded", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
+        except Exception as exc:
+            error = f"qr_upload: {exc}"
+            artifact_errors.append(error)
+            app_log("result_artifact_failed", page_id=page["id"], stage="qr_upload", error=str(exc))
+
+        try:
             started = time.perf_counter()
             snapshot = onedrive.upload_json(
                 f"{result_folder}/record.json",
-                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "qr": qr_upload.path},
+                {"form": form.to_dict(), "raw_form": raw_form, "notion": page, "qr": qr_path},
             )
-            app_log("result_snapshot_uploaded", seconds=round(time.perf_counter() - started, 3))
+            onedrive_paths.append(snapshot.path)
+            app_log("result_snapshot_uploaded", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
+        except Exception as exc:
+            error = f"snapshot_upload: {exc}"
+            artifact_errors.append(error)
+            app_log("result_artifact_failed", page_id=page["id"], stage="snapshot_upload", error=str(exc))
+
+        try:
             backlog.append(
                 BacklogEvent(
                     action="create",
                     entity="result",
                     payload=form.to_dict(),
                     notion_page_id=page["id"],
-                    onedrive_paths=[snapshot.path, qr_upload.path],
-                    status="complete",
+                    onedrive_paths=onedrive_paths,
+                    status="partial" if artifact_errors else "complete",
+                    error="; ".join(artifact_errors),
                 )
             )
-            return jsonify({"success": True, "message": "Data submitted successfully"})
         except Exception as exc:
-            backlog.append(BacklogEvent(action="create", entity="result", payload=form.to_dict(), status="failed", error=str(exc)))
-            return jsonify({"success": False, "error": str(exc)}), 400
+            app_log("result_backlog_failed", page_id=page["id"], error=str(exc))
+
+        response = {
+            "success": True,
+            "message": "Data submitted successfully" if not artifact_errors else "Data entry saved in Notion; some archive artifacts failed.",
+            "notion_page_id": page["id"],
+            "notion_page_url": page.get("url", ""),
+        }
+        if artifact_errors:
+            response["warning"] = "; ".join(artifact_errors)
+        return jsonify(response)
 
     @app.post("/api/create-upload-session")
     def api_create_upload_session():

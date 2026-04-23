@@ -1113,7 +1113,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
     messageDiv.style.display = 'block';
     if (r.ok && j.success) {
       messageDiv.className = 'message success';
-      messageDiv.textContent = '✓ ' + (j.message || 'Data entry saved successfully');
+      messageDiv.textContent = '✓ ' + (j.message || 'Data entry saved successfully') + (j.warning ? ' Warning: ' + j.warning : '');
 
       // reset UI
       e.target.reset();

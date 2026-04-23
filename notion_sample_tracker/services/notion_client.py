@@ -428,10 +428,16 @@ class NotionRepository:
                 page = self.client.pages.create(parent={"data_source_id": collection_id}, properties=properties)
                 self._collection_api_cache[collection_id] = "data_sources"
                 return page
-            except Exception:
-                pass
+            except Exception as exc:
+                if not self._looks_like_wrong_parent_type(exc):
+                    raise
         self._collection_api_cache[collection_id] = "databases"
         return self.client.pages.create(parent={"database_id": collection_id}, properties=properties)
+
+    @staticmethod
+    def _looks_like_wrong_parent_type(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return "data_source_id" in text and any(fragment in text for fragment in ("database_id", "parent", "not found", "invalid"))
 
     @staticmethod
     def _title_from_page(page: dict[str, Any]) -> str:
