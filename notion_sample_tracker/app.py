@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import io
 import os
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -214,19 +215,26 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         form = SampleForm.from_form(request.form)
         backlog.append(BacklogEvent(action="create", entity="sample", payload=_form_payload(request.form)))
         try:
-            if notion.sample_exists(form.name):
+            existing_sample = notion.sample_page_by_name(form.name)
+            if existing_sample:
                 raise ValueError(f"A sample with name '{form.name}' already exists.")
+            started = time.perf_counter()
             page = notion.create_sample(form)
+            app_log("notion_sample_created", seconds=round(time.perf_counter() - started, 3))
             sample_folder = notion.sample_storage_info_from_page(page)["folder"]
             uploaded_files = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"))
             qr_name = f"{_safe_segment(form.name)}_qr.png"
             qr_bytes = make_qr_png_bytes(page["url"])
+            started = time.perf_counter()
             qr_upload = onedrive.upload_bytes(f"{sample_folder}/{qr_name}", qr_bytes, "image/png")
-            notion.attach_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
+            notion.set_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
+            app_log("sample_qr_uploaded", seconds=round(time.perf_counter() - started, 3))
+            started = time.perf_counter()
             snapshot = onedrive.upload_json(
                 f"{sample_folder}/record.json",
                 {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "files": uploaded_files, "qr": qr_upload.path},
             )
+            app_log("sample_snapshot_uploaded", seconds=round(time.perf_counter() - started, 3))
             backlog.append(
                 BacklogEvent(
                     action="create",
@@ -247,16 +255,22 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         form = ResultForm.from_form(request.form)
         backlog.append(BacklogEvent(action="create", entity="result", payload=_form_payload(request.form)))
         try:
+            started = time.perf_counter()
             page = notion.create_result(form)
+            app_log("notion_result_created", seconds=round(time.perf_counter() - started, 3))
             result_folder = f"{_result_parent_folder(notion, form)}/results/{_safe_segment(form.name)}"
             qr_name = f"{_safe_segment(form.name)}_qr.png"
             qr_bytes = make_qr_png_bytes(page["url"])
+            started = time.perf_counter()
             qr_upload = onedrive.upload_bytes(f"{result_folder}/{qr_name}", qr_bytes, "image/png")
-            notion.attach_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
+            notion.set_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
+            app_log("result_qr_uploaded", seconds=round(time.perf_counter() - started, 3))
+            started = time.perf_counter()
             snapshot = onedrive.upload_json(
                 f"{result_folder}/record.json",
                 {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "qr": qr_upload.path},
             )
+            app_log("result_snapshot_uploaded", seconds=round(time.perf_counter() - started, 3))
             backlog.append(
                 BacklogEvent(
                     action="create",
@@ -348,6 +362,7 @@ def _archive_sample_photos(
     prefix: str,
     files,
 ) -> list[dict[str, str]]:
+    started = time.perf_counter()
     uploaded: list[dict[str, str]] = []
     notion_files = []
     for file_storage in files:
@@ -360,6 +375,7 @@ def _archive_sample_photos(
         notion_files.append({"name": safe_name, "content": content, "content_type": content_type})
         uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
     notion.attach_uploaded_files(page_id, "Photos", notion_files)
+    app_log("sample_photos_uploaded", seconds=round(time.perf_counter() - started, 3), count=len(uploaded))
     return uploaded
 
 
@@ -400,3 +416,7 @@ def _url_host(url: str) -> str:
     if "://" not in url:
         return ""
     return url.split("://", 1)[1].split("/", 1)[0]
+
+
+def app_log(event: str, **fields) -> None:
+    print(json.dumps({"event": event, **fields}, sort_keys=True), flush=True)

@@ -18,6 +18,9 @@ class NotionRepository:
         self.results_db = results_db
         self.people_db = people_db
         self.formula_parser = formula_parser
+        self._collection_cache: dict[str, dict[str, Any]] = {}
+        self._title_property_cache: dict[str, str] = {}
+        self._collection_api_cache: dict[str, str] = {}
 
     def list_samples(self) -> list[dict[str, str]]:
         return self._list_titles(self.samples_db)
@@ -26,13 +29,15 @@ class NotionRepository:
         return self._list_titles(self.results_db)
 
     def get_options(self) -> dict[str, list[str]]:
-        char_property = self._first_existing_property(self.results_db, ["Characterisation", "Characterization"])
+        samples_collection = self._retrieve_collection(self.samples_db)
+        results_collection = self._retrieve_collection(self.results_db)
+        char_property = self._first_existing_property_from_collection(results_collection, ["Characterisation", "Characterization"])
         return {
-            "synthesis": self._database_property_options(self.samples_db, "Synthesis", "multi_select"),
-            "processing": self._database_property_options(self.samples_db, "Processing", "multi_select"),
+            "synthesis": self._collection_property_options(samples_collection, "Synthesis", "multi_select"),
+            "processing": self._collection_property_options(samples_collection, "Processing", "multi_select"),
             "source": [item["name"] for item in self._list_titles(self.people_db)],
-            "entry_type": self._database_property_options(self.results_db, "Data Type", "select"),
-            "char_data": self._database_property_options(self.results_db, char_property, "multi_select") if char_property else [],
+            "entry_type": self._collection_property_options(results_collection, "Data Type", "select"),
+            "char_data": self._collection_property_options(results_collection, char_property, "multi_select") if char_property else [],
         }
 
     def create_sample(self, form: SampleForm) -> dict[str, Any]:
@@ -134,6 +139,23 @@ class NotionRepository:
             },
         )
 
+    def set_uploaded_file(self, page_id: str, property_name: str, name: str, content: bytes, content_type: str | None = None) -> dict[str, Any]:
+        file_id = self._upload_file_to_notion(name, content, content_type or mimetypes.guess_type(name)[0] or "application/octet-stream")
+        return self.client.pages.update(
+            page_id=page_id,
+            properties={
+                property_name: {
+                    "files": [
+                        {
+                            "name": name,
+                            "type": "file_upload",
+                            "file_upload": {"id": file_id},
+                        }
+                    ]
+                }
+            },
+        )
+
     def attach_uploaded_files(
         self,
         page_id: str,
@@ -156,10 +178,9 @@ class NotionRepository:
                     "file_upload": {"id": file_id},
                 }
             )
-        existing_files = self._existing_files(page_id, property_name)
         return self.client.pages.update(
             page_id=page_id,
-            properties={property_name: {"files": existing_files + uploaded_files}},
+            properties={property_name: {"files": uploaded_files}},
         )
 
     def _sample_properties(self, form: SampleForm, parsed: ParsedFormula | None, source_relations: list[dict]) -> dict[str, Any]:
@@ -287,6 +308,10 @@ class NotionRepository:
 
     def _database_property_options(self, database_id: str, property_name: str, property_type: str) -> list[str]:
         database = self._retrieve_collection(database_id)
+        return self._collection_property_options(database, property_name, property_type)
+
+    @staticmethod
+    def _collection_property_options(database: dict[str, Any], property_name: str, property_type: str) -> list[str]:
         prop = database.get("properties", {}).get(property_name)
         if not prop or prop.get("type") != property_type:
             return []
@@ -294,6 +319,10 @@ class NotionRepository:
 
     def _first_existing_property(self, database_id: str, names: list[str]) -> str:
         database = self._retrieve_collection(database_id)
+        return self._first_existing_property_from_collection(database, names)
+
+    @staticmethod
+    def _first_existing_property_from_collection(database: dict[str, Any], names: list[str]) -> str:
         properties = database.get("properties", {})
         for name in names:
             if name in properties:
@@ -301,10 +330,14 @@ class NotionRepository:
         return ""
 
     def _title_property_name(self, database_id: str) -> str:
+        if database_id in self._title_property_cache:
+            return self._title_property_cache[database_id]
         database = self._retrieve_collection(database_id)
         for name, prop in database.get("properties", {}).items():
             if prop.get("type") == "title":
+                self._title_property_cache[database_id] = name
                 return name
+        self._title_property_cache[database_id] = "Name"
         return "Name"
 
     def _relation_from_page(self, page_id: str, property_name: str) -> list[dict[str, str]]:
@@ -344,27 +377,60 @@ class NotionRepository:
         return upload_response.json()["id"]
 
     def _query_collection(self, collection_id: str, **kwargs) -> dict[str, Any]:
+        api = self._collection_api_cache.get(collection_id)
+        if api == "data_sources":
+            return self.client.data_sources.query(data_source_id=collection_id, **kwargs)
+        if api == "databases":
+            return self.client.databases.query(database_id=collection_id, **kwargs)
         if hasattr(self.client, "data_sources"):
             try:
-                return self.client.data_sources.query(data_source_id=collection_id, **kwargs)
+                response = self.client.data_sources.query(data_source_id=collection_id, **kwargs)
+                self._collection_api_cache[collection_id] = "data_sources"
+                return response
             except Exception:
                 pass
+        self._collection_api_cache[collection_id] = "databases"
         return self.client.databases.query(database_id=collection_id, **kwargs)
 
     def _retrieve_collection(self, collection_id: str) -> dict[str, Any]:
+        if collection_id in self._collection_cache:
+            return self._collection_cache[collection_id]
+        api = self._collection_api_cache.get(collection_id)
+        if api == "data_sources":
+            collection = self.client.data_sources.retrieve(data_source_id=collection_id)
+            self._collection_cache[collection_id] = collection
+            return collection
+        if api == "databases":
+            collection = self.client.databases.retrieve(database_id=collection_id)
+            self._collection_cache[collection_id] = collection
+            return collection
         if hasattr(self.client, "data_sources"):
             try:
-                return self.client.data_sources.retrieve(data_source_id=collection_id)
+                collection = self.client.data_sources.retrieve(data_source_id=collection_id)
+                self._collection_api_cache[collection_id] = "data_sources"
+                self._collection_cache[collection_id] = collection
+                return collection
             except Exception:
                 pass
-        return self.client.databases.retrieve(database_id=collection_id)
+        self._collection_api_cache[collection_id] = "databases"
+        collection = self.client.databases.retrieve(database_id=collection_id)
+        self._collection_cache[collection_id] = collection
+        return collection
 
     def _create_page(self, collection_id: str, properties: dict[str, Any]) -> dict[str, Any]:
+        api = self._collection_api_cache.get(collection_id)
+        if api == "data_sources":
+            return self.client.pages.create(parent={"data_source_id": collection_id}, properties=properties)
+        if api == "databases":
+            return self.client.pages.create(parent={"database_id": collection_id}, properties=properties)
         if hasattr(self.client, "data_sources"):
             try:
-                return self.client.pages.create(parent={"data_source_id": collection_id}, properties=properties)
+                page = self.client.pages.create(parent={"data_source_id": collection_id}, properties=properties)
+                self._collection_api_cache[collection_id] = "data_sources"
+                return page
             except Exception:
                 pass
+        self._collection_api_cache[collection_id] = "databases"
         return self.client.pages.create(parent={"database_id": collection_id}, properties=properties)
 
     @staticmethod
