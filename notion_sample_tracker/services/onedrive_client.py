@@ -25,6 +25,7 @@ class OneDriveClient:
         client_secret: str,
         root_folder: str,
         auth_mode: str = "client_credentials",
+        public_client: bool = False,
         drive_id: str = "",
         refresh_token: str = "",
         timeout: int = 60,
@@ -33,6 +34,7 @@ class OneDriveClient:
         self.client_id = client_id
         self.client_secret = client_secret
         self.auth_mode = auth_mode.strip().lower()
+        self.public_client = public_client
         self.root_folder = root_folder.strip("/")
         self.drive_id = drive_id
         self.refresh_token = refresh_token
@@ -162,15 +164,17 @@ class OneDriveClient:
     def _delegated_token(self) -> str:
         token_tenant = self.tenant_id or "consumers"
         url = f"https://login.microsoftonline.com/{token_tenant}/oauth2/v2.0/token"
+        data = {
+            "client_id": self.client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+            "scope": "Files.ReadWrite offline_access",
+        }
+        if not self.public_client:
+            data["client_secret"] = self.client_secret
         response = requests.post(
             url,
-            data={
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "grant_type": "refresh_token",
-                "refresh_token": self.refresh_token,
-                "scope": "Files.ReadWrite offline_access",
-            },
+            data=data,
             timeout=self.timeout,
         )
         self._raise_for_graph_token_error(response)

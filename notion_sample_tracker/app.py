@@ -36,6 +36,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         client_id=settings.onedrive_client_id,
         client_secret=settings.onedrive_client_secret,
         auth_mode=settings.onedrive_auth_mode,
+        public_client=settings.onedrive_public_client,
         drive_id=settings.onedrive_drive_id,
         refresh_token=settings.onedrive_refresh_token,
         root_folder=settings.onedrive_root_folder,

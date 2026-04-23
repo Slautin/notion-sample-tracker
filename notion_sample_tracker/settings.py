@@ -34,6 +34,7 @@ class Settings:
     onedrive_client_id: str
     onedrive_client_secret: str
     onedrive_auth_mode: str
+    onedrive_public_client: bool
     onedrive_drive_id: str
     onedrive_refresh_token: str
     onedrive_root_folder: str
@@ -54,6 +55,7 @@ class Settings:
             onedrive_client_id=_required("ONEDRIVE_CLIENT_ID"),
             onedrive_client_secret=_required("ONEDRIVE_CLIENT_SECRET"),
             onedrive_auth_mode=_optional("ONEDRIVE_AUTH_MODE", "client_credentials"),
+            onedrive_public_client=_optional("ONEDRIVE_PUBLIC_CLIENT", "false").lower() in {"1", "true", "yes"},
             onedrive_drive_id=_optional("ONEDRIVE_DRIVE_ID"),
             onedrive_refresh_token=_optional("ONEDRIVE_REFRESH_TOKEN"),
             onedrive_root_folder=_optional("ONEDRIVE_ROOT_FOLDER", "SampleTracker"),
