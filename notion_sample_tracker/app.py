@@ -5,7 +5,7 @@ import io
 import os
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 
@@ -14,6 +14,7 @@ from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
 from notion_sample_tracker.services.notion_client import NotionRepository
 from notion_sample_tracker.services.onedrive_client import OneDriveClient
+from notion_sample_tracker.services.pdf_receipt import make_receipt_pdf
 from notion_sample_tracker.services.qrcode_service import make_qr_png_bytes
 from notion_sample_tracker.settings import Settings
 
@@ -210,14 +211,29 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         except Exception as exc:
             return jsonify({"success": False, "error": str(exc)}), 500
 
+    @app.post("/api/validate-sample")
+    def api_validate_sample():
+        try:
+            form = SampleForm.from_form(request.form)
+            _validate_sample_form(form, notion)
+            return jsonify({"success": True})
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+    @app.post("/api/validate-result")
+    def api_validate_result():
+        try:
+            _validate_result_raw(_form_payload(request.form), notion, preflight=True)
+            return jsonify({"success": True})
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
     @app.post("/api/submit")
     def api_submit_sample():
         form = SampleForm.from_form(request.form)
         backlog.append(BacklogEvent(action="create", entity="sample", payload=_form_payload(request.form)))
         try:
-            existing_sample = notion.sample_page_by_name(form.name)
-            if existing_sample:
-                raise ValueError(f"A sample with name '{form.name}' already exists.")
+            _validate_sample_form(form, notion)
             started = time.perf_counter()
             page = notion.create_sample(form)
             app_log("notion_sample_created", seconds=round(time.perf_counter() - started, 3))
@@ -245,7 +261,13 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     status="complete",
                 )
             )
-            return jsonify({"success": True, "message": "Sample submitted successfully"})
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Sample submitted successfully",
+                    "receipt": _sample_receipt(form, page),
+                }
+            )
         except Exception as exc:
             backlog.append(BacklogEvent(action="create", entity="sample", payload=form.to_dict(), status="failed", error=str(exc)))
             return jsonify({"success": False, "error": str(exc)}), 400
@@ -258,6 +280,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         artifact_errors: list[str] = []
         onedrive_paths: list[str] = []
         try:
+            _validate_result_raw(raw_form, notion, preflight=False)
             form = ResultForm.from_form(request.form)
         except Exception as exc:
             app_log("result_submission_failed", stage="form_parse", error=str(exc), form=raw_form)
@@ -322,10 +345,26 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             "message": "Data submitted successfully" if not artifact_errors else "Data entry saved in Notion; some archive artifacts failed.",
             "notion_page_id": page["id"],
             "notion_page_url": page.get("url", ""),
+            "receipt": _result_receipt(form, page),
         }
         if artifact_errors:
             response["warning"] = "; ".join(artifact_errors)
         return jsonify(response)
+
+    @app.post("/api/receipt-pdf")
+    def api_receipt_pdf():
+        data = request.get_json(force=True, silent=True) or {}
+        title = str(data.get("title") or "Submission Receipt").strip()
+        rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+        clean_rows = []
+        for item in rows:
+            if isinstance(item, list) and len(item) >= 2:
+                clean_rows.append((str(item[0]), item[1]))
+            elif isinstance(item, dict):
+                clean_rows.append((str(item.get("label", "")), item.get("value", "")))
+        pdf = make_receipt_pdf(title, clean_rows)
+        filename = f"{_safe_segment(title.lower())}.pdf"
+        return send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True, download_name=filename)
 
     @app.post("/api/create-upload-session")
     def api_create_upload_session():
@@ -418,6 +457,92 @@ def _archive_sample_photos(
     notion.attach_uploaded_files(page_id, "Photos", notion_files)
     app_log("sample_photos_uploaded", seconds=round(time.perf_counter() - started, 3), count=len(uploaded))
     return uploaded
+
+
+def _validate_sample_form(form: SampleForm, notion: NotionRepository) -> None:
+    errors = []
+    if not form.name:
+        errors.append("Sample Name is required.")
+    if not form.sample_type:
+        errors.append("Sample Type is required.")
+    is_subsample = form.sample_type.lower().replace("_", "-") in {"sub-sample", "sub sample", "subsample"}
+    if is_subsample:
+        if not form.parent_sample_id:
+            errors.append("Parent Sample is required for a sub-sample.")
+    elif form.sample_type and not form.composition:
+        errors.append("Composition is required for a root sample.")
+    if errors:
+        raise ValueError("Please fill required fields: " + " ".join(errors))
+    if notion.sample_exists(form.name):
+        raise ValueError(f"A sample with name '{form.name}' already exists. Please choose another name.")
+
+
+def _validate_result_raw(raw_form: dict[str, Any], notion: NotionRepository, preflight: bool) -> None:
+    name = str(raw_form.get("name") or "").strip()
+    entry_type = str(raw_form.get("entry_type") or "").strip()
+    parent_entry = str(raw_form.get("parent_entry") or "").strip()
+    parent_sample = str(raw_form.get("parent_sample") or "").strip()
+    parent_dataset = str(raw_form.get("parent_dataset") or "").strip()
+    upload_method = str(raw_form.get("data_type") or raw_form.get("upload_method") or "").strip()
+    data_link = str(raw_form.get("data_link") or raw_form.get("link") or "").strip()
+    onedrive_path = str(raw_form.get("onedrive_path") or "").strip()
+
+    errors = []
+    if not name:
+        errors.append("Name is required.")
+    if not entry_type:
+        errors.append("Entry type is required.")
+    if not parent_entry:
+        errors.append("Parent Entry is required.")
+    elif parent_entry == "sample" and not parent_sample:
+        errors.append("Parent Sample is required when Parent Entry is sample.")
+    elif parent_entry == "dataset" and not parent_dataset:
+        errors.append("Parent Dataset is required when Parent Entry is dataset.")
+    if not upload_method:
+        errors.append("Data upload method is required.")
+    elif upload_method == "link" and not data_link:
+        errors.append("Link is required when Data is Link.")
+    elif upload_method == "file" and not preflight and not onedrive_path:
+        errors.append("OneDrive file link is missing. Please upload the file before submitting.")
+    if errors:
+        raise ValueError("Please fill required fields: " + " ".join(errors))
+    if notion.result_exists(name):
+        raise ValueError(f"A result with name '{name}' already exists. Please choose another name.")
+
+
+def _sample_receipt(form: SampleForm, page: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": f"Sample Submission - {form.name}",
+        "rows": [
+            ["Record Type", "Sample"],
+            ["Name", form.name],
+            ["Sample Type", form.sample_type],
+            ["Composition", form.composition],
+            ["Parent Sample", form.parent_sample_id],
+            ["Synthesis", form.synthesis],
+            ["Processing", form.processing],
+            ["Status", form.status],
+            ["Location", form.location],
+            ["Notion URL", page.get("url", "")],
+        ],
+    }
+
+
+def _result_receipt(form: ResultForm, page: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": f"Result Submission - {form.name}",
+        "rows": [
+            ["Record Type", "Result"],
+            ["Name", form.name],
+            ["Data Type", form.data_type],
+            ["Upload Method", form.upload_method],
+            ["Sample", form.sample_id],
+            ["Related Result", form.related_result_id],
+            ["Characterisation", form.characterization],
+            ["Link", form.link],
+            ["Notion URL", page.get("url", "")],
+        ],
+    }
 
 
 def _form_payload(form) -> dict:

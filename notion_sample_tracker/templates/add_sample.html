@@ -644,6 +644,19 @@
             line-height: 1.5;
         }
 
+        .receipt-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+
+        .receipt-actions .btn {
+            flex: 0 1 auto;
+            padding: 10px 14px;
+            font-size: 14px;
+        }
+
         @media (max-width: 720px) {
             .container {
                 padding: 22px;
@@ -677,6 +690,8 @@
                 <input type="file" id="jsonFileInput" accept=".json" onchange="loadFromJSON(event)">
                 <div class="file-info">Load previously saved form data from a JSON file</div>
             </div>
+
+            <div id="message" class="message"></div>
 
             <form id="sampleForm">
                 <!-- Q1 -->
@@ -836,7 +851,6 @@
                 </div>
             </form>
 
-            <div id="message" class="message"></div>
         </div>
     </div>
 
@@ -1256,17 +1270,87 @@
         // =========================
         // Form submit
         // =========================
+        let latestReceipt = null;
+
+        function showSubmissionSuccess(message, receipt) {
+            latestReceipt = receipt || null;
+            const messageDiv = document.getElementById('message');
+            messageDiv.style.display = 'block';
+            messageDiv.className = 'message success';
+            messageDiv.innerHTML = `
+                <strong>${escapeHtml(message || 'Submission complete')}</strong>
+                <div class="file-info">The record was saved. You can download a PDF receipt for your records.</div>
+                <div class="receipt-actions">
+                    <button type="button" class="btn btn-secondary" onclick="downloadReceiptPdf()">Download PDF receipt</button>
+                </div>
+            `;
+            messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        async function downloadReceiptPdf() {
+            if (!latestReceipt) return;
+            const response = await fetch('/api/receipt-pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(latestReceipt)
+            });
+            if (!response.ok) {
+                alert('Could not generate PDF receipt.');
+                return;
+            }
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${(latestReceipt.title || 'submission_receipt').replace(/[^A-Za-z0-9_.-]+/g, '_')}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        async function validateSampleBeforeUpload(formData) {
+            const response = await fetch('/api/validate-sample', {
+                method: 'POST',
+                body: formData
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || 'Please fill required fields before uploading files.');
+            }
+        }
+
         document.getElementById('sampleForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
             const submitBtn = document.getElementById('submitBtn');
             const messageDiv = document.getElementById('message');
 
+            if (!e.target.reportValidity()) {
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = 'Please fill all required fields before submitting.';
+                messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+
             submitBtn.disabled = true;
             submitBtn.textContent = '⏳ Submitting...';
             messageDiv.style.display = 'none';
 
             const formData = new FormData(e.target);
+
+            try {
+                await validateSampleBeforeUpload(formData);
+            } catch (error) {
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = error.message;
+                messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                submitBtn.disabled = false;
+                submitBtn.textContent = '✓ Submit to Database';
+                return;
+            }
 
             // Append Q7 files (incremental selection is managed by selectedPhotos)
             selectedPhotos.forEach(entry => {
@@ -1283,8 +1367,7 @@
 
                 messageDiv.style.display = 'block';
                 if (response.ok && result.success) {
-                    messageDiv.className = 'message success';
-                    messageDiv.textContent = '✓ ' + result.message;
+                    showSubmissionSuccess(result.message, result.receipt);
 
                     document.getElementById('sampleForm').reset();
 
@@ -1301,11 +1384,13 @@
                 } else {
                     messageDiv.className = 'message error';
                     messageDiv.textContent = '✗ ' + (result.error || 'Submission failed');
+                    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }
             } catch (error) {
                 messageDiv.style.display = 'block';
                 messageDiv.className = 'message error';
                 messageDiv.textContent = '✗ Error: ' + error.message;
+                messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.textContent = '✓ Submit to Database';

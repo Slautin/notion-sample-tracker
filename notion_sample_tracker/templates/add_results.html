@@ -468,6 +468,19 @@
       line-height: 1.5;
     }
 
+    .receipt-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .receipt-actions .btn {
+      flex: 0 1 auto;
+      padding: 10px 14px;
+      font-size: 14px;
+    }
+
     #uploadStatus {
       border: 1px solid var(--line);
       background: #fff;
@@ -512,6 +525,8 @@
       <h1>Add Data Entry</h1>
       <p class="subtitle">Register a measurement, processing output, file, or external link and connect it to the right sample or dataset.</p>
       <div class="form-note">Upload files first through the form flow; the generated OneDrive link is saved into the Notion Link field. Dataset children inherit the sample relation from the selected parent dataset.</div>
+
+      <div id="message" class="message"></div>
 
       <form id="dataForm" novalidate>
         <!-- 1) Name -->
@@ -674,7 +689,6 @@
         </div>
       </form>
 
-      <div id="message" class="message"></div>
     </div>
   </div>
 
@@ -1196,6 +1210,57 @@ document.getElementById('bigFile').addEventListener('change', (e) => {
 /* =========================================================
    ✅ CHANGED: Submit now triggers OneDrive upload (if Data Type = file)
 ========================================================= */
+let latestReceipt = null;
+
+function showSubmissionSuccess(message, receipt, warning) {
+  latestReceipt = receipt || null;
+  const messageDiv = document.getElementById('message');
+  messageDiv.style.display = 'block';
+  messageDiv.className = 'message success';
+  messageDiv.innerHTML = `
+    <strong>${escapeHtml(message || 'Submission complete')}</strong>
+    ${warning ? `<div class="file-info">Warning: ${escapeHtml(warning)}</div>` : ''}
+    <div class="file-info">The record was saved. You can download a PDF receipt for your records.</div>
+    <div class="receipt-actions">
+      <button type="button" class="btn btn-secondary" onclick="downloadReceiptPdf()">Download PDF receipt</button>
+    </div>
+  `;
+  messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function downloadReceiptPdf() {
+  if (!latestReceipt) return;
+  const response = await fetch('/api/receipt-pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(latestReceipt)
+  });
+  if (!response.ok) {
+    alert('Could not generate PDF receipt.');
+    return;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${(latestReceipt.title || 'submission_receipt').replace(/[^A-Za-z0-9_.-]+/g, '_')}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function validateResultBeforeUpload(form) {
+  const response = await fetch('/api/validate-result', {
+    method: 'POST',
+    body: new FormData(form)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.success) {
+    throw new Error(result.error || 'Please fill required fields before uploading files.');
+  }
+}
+
 document.getElementById('dataForm').addEventListener('submit', async (e) => {
   e.preventDefault();
 
@@ -1211,6 +1276,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       messageDiv.className = 'message error';
       messageDiv.style.display = 'block';
       messageDiv.textContent = '✗ Parent Sample is required when Parent Entry is set to sample.';
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
   } else if (parentEntry === 'dataset') {
@@ -1219,8 +1285,24 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       messageDiv.className = 'message error';
       messageDiv.style.display = 'block';
       messageDiv.textContent = '✗ Parent Dataset is required when Parent Entry is set to dataset.';
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
+  } else {
+    messageDiv.className = 'message error';
+    messageDiv.style.display = 'block';
+    messageDiv.textContent = '✗ Parent Entry is required.';
+    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  const entryType = document.getElementById('entry_type').value;
+  if (!entryType) {
+    messageDiv.className = 'message error';
+    messageDiv.style.display = 'block';
+    messageDiv.textContent = '✗ Entry type is required.';
+    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
   }
 
   const dataType = document.getElementById('data_type').value;
@@ -1228,6 +1310,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
     messageDiv.className = 'message error';
     messageDiv.style.display = 'block';
     messageDiv.textContent = '✗ Please select Data Type (Link or File).';
+    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
 
@@ -1237,8 +1320,19 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       messageDiv.className = 'message error';
       messageDiv.style.display = 'block';
       messageDiv.textContent = '✗ Link is required.';
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
+  }
+
+  try {
+    await validateResultBeforeUpload(e.target);
+  } catch (err) {
+    messageDiv.className = 'message error';
+    messageDiv.style.display = 'block';
+    messageDiv.textContent = '✗ ' + err.message;
+    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
   }
 
   /* ✅ If file: upload NOW (on submit) */
@@ -1247,6 +1341,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       messageDiv.className = 'message error';
       messageDiv.style.display = 'block';
       messageDiv.textContent = '✗ File is required.';
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
 
@@ -1300,6 +1395,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       messageDiv.className = 'message error';
       messageDiv.style.display = 'block';
       messageDiv.textContent = '✗ Upload failed. Fix the issue and try Submit again.';
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
   }
@@ -1319,8 +1415,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
 
     messageDiv.style.display = 'block';
     if (r.ok && j.success) {
-      messageDiv.className = 'message success';
-      messageDiv.textContent = '✓ ' + (j.message || 'Data entry saved successfully') + (j.warning ? ' Warning: ' + j.warning : '');
+      showSubmissionSuccess(j.message || 'Data entry saved successfully', j.receipt, j.warning);
 
       // reset UI
       e.target.reset();
@@ -1339,11 +1434,13 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
     } else {
       messageDiv.className = 'message error';
       messageDiv.textContent = '✗ ' + (j.error || 'Submission failed');
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   } catch (err) {
     messageDiv.style.display = 'block';
     messageDiv.className = 'message error';
     messageDiv.textContent = '✗ Error: ' + err.message;
+    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = '✓ Submit';

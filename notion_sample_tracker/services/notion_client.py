@@ -66,6 +66,12 @@ class NotionRepository:
     def sample_page_by_name(self, name: str) -> dict[str, Any] | None:
         return self._find_by_any_title(self.samples_db, name)
 
+    def result_exists(self, name: str) -> bool:
+        return self._find_by_any_title(self.results_db, name) is not None
+
+    def result_page_by_name(self, name: str) -> dict[str, Any] | None:
+        return self._find_by_any_title(self.results_db, name)
+
     def sample_storage_info(self, sample_name_or_id: str) -> dict[str, str]:
         page_id = self._resolve_page_id(self.samples_db, sample_name_or_id)
         return self.sample_storage_info_from_page(self.client.pages.retrieve(page_id=page_id))
