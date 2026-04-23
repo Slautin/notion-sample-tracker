@@ -76,10 +76,10 @@ class OneDriveClient:
         response = requests.post(
             url,
             headers={"Authorization": f"Bearer {token}"},
-            json={"item": {"@microsoft.graph.conflictBehavior": "replace"}},
+            json={"item": {"@microsoft.graph.conflictBehavior": "rename"}},
             timeout=self.timeout,
         )
-        response.raise_for_status()
+        self._raise_for_graph_error(response, "create upload session")
         data = response.json()
         return {
             "upload_url": data["uploadUrl"],
@@ -137,8 +137,11 @@ class OneDriveClient:
             timeout=self.timeout,
         )
         if response.status_code == 409:
+            if self._path_exists(token, f"{parent_path}/{name}" if parent_path else name):
+                return
+            self._raise_for_graph_error(response, "create folder")
             return
-        response.raise_for_status()
+        self._raise_for_graph_error(response, "create folder")
 
     @staticmethod
     def _quote_path(path: str) -> str:
@@ -194,3 +197,20 @@ class OneDriveClient:
         error = payload.get("error", "token_error")
         description = payload.get("error_description", response.text)
         raise RuntimeError(f"Microsoft token request failed: {error}: {description}")
+
+    @staticmethod
+    def _raise_for_graph_error(response: requests.Response, action: str) -> None:
+        if response.ok:
+            return
+        try:
+            payload = response.json()
+        except ValueError:
+            response.raise_for_status()
+        error = payload.get("error", {})
+        if isinstance(error, dict):
+            code = error.get("code", "graph_error")
+            message = error.get("message", response.text)
+        else:
+            code = "graph_error"
+            message = str(error) or response.text
+        raise RuntimeError(f"Microsoft Graph {action} failed: {code}: {message}")
