@@ -13,6 +13,7 @@ from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
 from notion_sample_tracker.services.notion_client import NotionRepository
 from notion_sample_tracker.services.onedrive_client import OneDriveClient
+from notion_sample_tracker.services.qrcode_service import make_qr_png_bytes
 from notion_sample_tracker.settings import Settings
 
 
@@ -67,6 +68,8 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         event = BacklogEvent(action="create", entity="sample", payload=form.to_dict())
         backlog.append(event)
         try:
+            if notion.sample_exists(form.name):
+                raise ValueError(f"A sample with name '{form.name}' already exists.")
             page = notion.create_sample(form)
             snapshot_path = f"samples/{page['id']}/record.json"
             onedrive_result = onedrive.upload_json(snapshot_path, {"form": form.to_dict(), "notion": page})
@@ -134,7 +137,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     entity="result",
                     payload=form.to_dict(),
                     notion_page_id=page["id"],
-                    onedrive_paths=[snapshot.path, *uploaded_paths],
+                    onedrive_paths=[snapshot.path, *[item["path"] for item in uploaded_paths]],
                     status="complete",
                 )
             )
@@ -170,7 +173,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     entity="result",
                     payload=form.to_dict(),
                     notion_page_id=page_id,
-                    onedrive_paths=[snapshot.path, *uploaded_paths],
+                    onedrive_paths=[snapshot.path, *[item["path"] for item in uploaded_paths]],
                     status="complete",
                 )
             )
@@ -211,11 +214,18 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         form = SampleForm.from_form(request.form)
         backlog.append(BacklogEvent(action="create", entity="sample", payload=_form_payload(request.form)))
         try:
+            if notion.sample_exists(form.name):
+                raise ValueError(f"A sample with name '{form.name}' already exists.")
             page = notion.create_sample(form)
-            uploaded_paths = _archive_uploads(onedrive, f"samples/{page['id']}/files", request.files.getlist("photos"))
+            sample_folder = _sample_folder(form)
+            uploaded_files = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"))
+            qr_name = f"{_safe_segment(form.name)}_qr.png"
+            qr_bytes = make_qr_png_bytes(page["url"])
+            qr_upload = onedrive.upload_bytes(f"{sample_folder}/{qr_name}", qr_bytes, "image/png")
+            notion.attach_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
             snapshot = onedrive.upload_json(
-                f"samples/{page['id']}/record.json",
-                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "files": uploaded_paths},
+                f"{sample_folder}/record.json",
+                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "files": uploaded_files, "qr": qr_upload.path},
             )
             backlog.append(
                 BacklogEvent(
@@ -223,7 +233,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     entity="sample",
                     payload=form.to_dict(),
                     notion_page_id=page["id"],
-                    onedrive_paths=[snapshot.path, *uploaded_paths],
+                    onedrive_paths=[snapshot.path, qr_upload.path, *[item["path"] for item in uploaded_files]],
                     status="complete",
                 )
             )
@@ -238,9 +248,14 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         backlog.append(BacklogEvent(action="create", entity="result", payload=_form_payload(request.form)))
         try:
             page = notion.create_result(form)
+            result_folder = f"results/{_safe_segment(form.name)}"
+            qr_name = f"{_safe_segment(form.name)}_qr.png"
+            qr_bytes = make_qr_png_bytes(page["url"])
+            qr_upload = onedrive.upload_bytes(f"{result_folder}/{qr_name}", qr_bytes, "image/png")
+            notion.attach_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
             snapshot = onedrive.upload_json(
-                f"results/{page['id']}/record.json",
-                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page},
+                f"{result_folder}/record.json",
+                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "qr": qr_upload.path},
             )
             backlog.append(
                 BacklogEvent(
@@ -248,7 +263,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     entity="result",
                     payload=form.to_dict(),
                     notion_page_id=page["id"],
-                    onedrive_paths=[snapshot.path],
+                    onedrive_paths=[snapshot.path, qr_upload.path],
                     status="complete",
                 )
             )
@@ -312,15 +327,35 @@ def _safe_list(loader: Callable[[], list[dict[str, str]]]) -> list[dict[str, str
         return []
 
 
-def _archive_uploads(onedrive: OneDriveClient, prefix: str, files) -> list[str]:
-    paths: list[str] = []
+def _archive_uploads(onedrive: OneDriveClient, prefix: str, files) -> list[dict[str, str]]:
+    uploaded: list[dict[str, str]] = []
     for file_storage in files:
         if not file_storage or not file_storage.filename:
             continue
         safe_name = Path(file_storage.filename).name.replace("/", "_")
         result = onedrive.upload_file(f"{prefix}/{safe_name}", file_storage.stream, file_storage.mimetype)
-        paths.append(result.path)
-    return paths
+        uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
+    return uploaded
+
+
+def _archive_sample_photos(
+    notion: NotionRepository,
+    onedrive: OneDriveClient,
+    page_id: str,
+    prefix: str,
+    files,
+) -> list[dict[str, str]]:
+    uploaded: list[dict[str, str]] = []
+    for file_storage in files:
+        if not file_storage or not file_storage.filename:
+            continue
+        safe_name = Path(file_storage.filename).name.replace("/", "_")
+        content = file_storage.read()
+        content_type = file_storage.mimetype or "application/octet-stream"
+        result = onedrive.upload_bytes(f"{prefix}/{safe_name}", content, content_type)
+        notion.attach_uploaded_file(page_id, "Photos", safe_name, content, content_type)
+        uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
+    return uploaded
 
 
 def _form_payload(form) -> dict:
@@ -330,6 +365,12 @@ def _form_payload(form) -> dict:
 def _safe_segment(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value or "").strip())
     return cleaned or "entry"
+
+
+def _sample_folder(form: SampleForm) -> str:
+    composition = _safe_segment(form.composition or "sub_sample")
+    sample_name = _safe_segment(form.name)
+    return f"samples/{composition}/{sample_name}"
 
 
 def _notion_home_url(settings: Settings) -> str:

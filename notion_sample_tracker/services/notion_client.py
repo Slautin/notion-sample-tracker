@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import mimetypes
 from typing import Any
 
+import requests
 from notion_client import Client
 
 from notion_sample_tracker.models import PersonRef, ResultForm, SampleForm
@@ -10,6 +12,7 @@ from notion_sample_tracker.services.formula import FormulaParser, ParsedFormula
 
 class NotionRepository:
     def __init__(self, token: str, samples_db: str, results_db: str, people_db: str, formula_parser: FormulaParser):
+        self.token = token
         self.client = Client(auth=token)
         self.samples_db = samples_db
         self.results_db = results_db
@@ -49,21 +52,61 @@ class NotionRepository:
         properties = self._result_properties(form, source_relations)
         return self._create_page(self.results_db, properties)
 
+    def sample_exists(self, name: str) -> bool:
+        return self._find_by_any_title(self.samples_db, name) is not None
+
     def update_result(self, page_id: str, form: ResultForm) -> dict[str, Any]:
         source_relations = self._source_relations(form.sources)
         properties = self._result_properties(form, source_relations)
         return self.client.pages.update(page_id=page_id, properties=properties)
 
     def attach_external_file(self, page_id: str, property_name: str, name: str, url: str) -> dict[str, Any]:
+        existing_files = self._existing_files(page_id, property_name)
         return self.client.pages.update(
             page_id=page_id,
             properties={
                 property_name: {
-                    "files": [
+                    "files": existing_files
+                    + [
                         {
                             "name": name,
                             "type": "external",
                             "external": {"url": url},
+                        }
+                    ]
+                }
+            },
+        )
+
+    def attach_external_files(self, page_id: str, property_name: str, files: list[dict[str, str]]) -> dict[str, Any] | None:
+        if not files:
+            return None
+        existing_files = self._existing_files(page_id, property_name)
+        external_files = [
+            {"name": item["name"], "type": "external", "external": {"url": item["url"]}}
+            for item in files
+            if item.get("name") and item.get("url")
+        ]
+        if not external_files:
+            return None
+        return self.client.pages.update(
+            page_id=page_id,
+            properties={property_name: {"files": existing_files + external_files}},
+        )
+
+    def attach_uploaded_file(self, page_id: str, property_name: str, name: str, content: bytes, content_type: str | None = None) -> dict[str, Any]:
+        file_id = self._upload_file_to_notion(name, content, content_type or mimetypes.guess_type(name)[0] or "application/octet-stream")
+        existing_files = self._existing_files(page_id, property_name)
+        return self.client.pages.update(
+            page_id=page_id,
+            properties={
+                property_name: {
+                    "files": existing_files
+                    + [
+                        {
+                            "name": name,
+                            "type": "file_upload",
+                            "file_upload": {"id": file_id},
                         }
                     ]
                 }
@@ -219,6 +262,37 @@ class NotionRepository:
         page = self.client.pages.retrieve(page_id=page_id)
         relation = page.get("properties", {}).get(property_name, {}).get("relation", [])
         return [{"id": item["id"]} for item in relation if item.get("id")]
+
+    def _existing_files(self, page_id: str, property_name: str) -> list[dict[str, Any]]:
+        page = self.client.pages.retrieve(page_id=page_id)
+        prop = page.get("properties", {}).get(property_name, {})
+        files = prop.get("files", []) if prop.get("type") == "files" else []
+        kept = []
+        for item in files:
+            file_type = item.get("type")
+            if file_type == "external":
+                kept.append({"name": item.get("name", "file"), "type": "external", "external": item["external"]})
+            elif file_type == "file_upload":
+                kept.append({"name": item.get("name", "file"), "type": "file_upload", "file_upload": item["file_upload"]})
+        return kept
+
+    def _upload_file_to_notion(self, name: str, content: bytes, content_type: str) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Notion-Version": "2025-09-03",
+        }
+        response = requests.post("https://api.notion.com/v1/file_uploads", headers=headers, timeout=60)
+        response.raise_for_status()
+        upload_url = response.json()["upload_url"]
+        upload_response = requests.post(
+            upload_url,
+            headers=headers,
+            files={"file": (name, content, content_type)},
+            data={"part_number": "1"},
+            timeout=120,
+        )
+        upload_response.raise_for_status()
+        return upload_response.json()["id"]
 
     def _query_collection(self, collection_id: str, **kwargs) -> dict[str, Any]:
         if hasattr(self.client, "data_sources"):
