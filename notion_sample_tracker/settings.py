@@ -33,7 +33,9 @@ class Settings:
     onedrive_tenant_id: str
     onedrive_client_id: str
     onedrive_client_secret: str
+    onedrive_auth_mode: str
     onedrive_drive_id: str
+    onedrive_refresh_token: str
     onedrive_root_folder: str
     backlog_dir: Path
     max_upload_mb: int
@@ -51,7 +53,9 @@ class Settings:
             onedrive_tenant_id=_required("ONEDRIVE_TENANT_ID"),
             onedrive_client_id=_required("ONEDRIVE_CLIENT_ID"),
             onedrive_client_secret=_required("ONEDRIVE_CLIENT_SECRET"),
+            onedrive_auth_mode=_optional("ONEDRIVE_AUTH_MODE", "client_credentials"),
             onedrive_drive_id=_optional("ONEDRIVE_DRIVE_ID"),
+            onedrive_refresh_token=_optional("ONEDRIVE_REFRESH_TOKEN"),
             onedrive_root_folder=_optional("ONEDRIVE_ROOT_FOLDER", "SampleTracker"),
             backlog_dir=Path(_optional("BACKLOG_DIR", "./backlog")),
             max_upload_mb=int(_optional("MAX_UPLOAD_MB", "200")),

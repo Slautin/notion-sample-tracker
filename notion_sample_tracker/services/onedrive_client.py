@@ -24,19 +24,26 @@ class OneDriveClient:
         client_id: str,
         client_secret: str,
         root_folder: str,
+        auth_mode: str = "client_credentials",
         drive_id: str = "",
+        refresh_token: str = "",
         timeout: int = 60,
     ):
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
+        self.auth_mode = auth_mode.strip().lower()
         self.root_folder = root_folder.strip("/")
         self.drive_id = drive_id
+        self.refresh_token = refresh_token
         self.timeout = timeout
-        if not self.drive_id:
+        self._delegated_access_token = ""
+        if self.auth_mode == "client_credentials" and not self.drive_id:
             raise RuntimeError(
                 "ONEDRIVE_DRIVE_ID is required for server-side Microsoft Graph uploads with client-credentials auth."
             )
+        if self.auth_mode == "delegated_refresh" and not self.refresh_token:
+            raise RuntimeError("ONEDRIVE_REFRESH_TOKEN is required when ONEDRIVE_AUTH_MODE=delegated_refresh.")
 
     def upload_json(self, relative_path: str, payload: dict) -> UploadResult:
         content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
@@ -85,6 +92,8 @@ class OneDriveClient:
         return f"{self.root_folder}/{relative_path.strip('/')}"
 
     def _drive_base(self) -> str:
+        if self.auth_mode == "delegated_refresh" and not self.drive_id:
+            return f"{GRAPH_ROOT}/me/drive"
         return f"{GRAPH_ROOT}/drives/{self.drive_id}"
 
     def _ensure_parent_folders(self, token: str, file_path: str) -> None:
@@ -129,6 +138,8 @@ class OneDriveClient:
         return "/".join(quote(part, safe="") for part in path.strip("/").split("/") if part)
 
     def _access_token(self) -> str:
+        if self.auth_mode == "delegated_refresh":
+            return self._delegated_token()
         url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
         response = requests.post(
             url,
@@ -142,3 +153,23 @@ class OneDriveClient:
         )
         response.raise_for_status()
         return response.json()["access_token"]
+
+    def _delegated_token(self) -> str:
+        token_tenant = self.tenant_id or "consumers"
+        url = f"https://login.microsoftonline.com/{token_tenant}/oauth2/v2.0/token"
+        response = requests.post(
+            url,
+            data={
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+                "scope": "Files.ReadWrite offline_access",
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        token = response.json()
+        self.refresh_token = token.get("refresh_token", self.refresh_token)
+        self._delegated_access_token = token["access_token"]
+        return self._delegated_access_token
