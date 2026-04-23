@@ -29,7 +29,12 @@ def _json_items(value: str | None) -> list[dict[str, Any]]:
 def names_from_json(value: str | None) -> list[str]:
     names: list[str] = []
     for item in _json_items(value):
-        name = str(item.get("name", "")).strip()
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+        else:
+            name = ""
         if name:
             names.append(name)
     return names

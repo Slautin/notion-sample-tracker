@@ -252,12 +252,18 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
     @app.post("/api/submit-data")
     def api_submit_result():
-        form = ResultForm.from_form(request.form)
         raw_form = _form_payload(request.form)
         backlog.append(BacklogEvent(action="create", entity="result", payload=raw_form))
         page: dict | None = None
         artifact_errors: list[str] = []
         onedrive_paths: list[str] = []
+        try:
+            form = ResultForm.from_form(request.form)
+        except Exception as exc:
+            app_log("result_submission_failed", stage="form_parse", error=str(exc), form=raw_form)
+            backlog.append(BacklogEvent(action="create", entity="result", payload=raw_form, status="failed", error=f"form_parse: {exc}"))
+            return jsonify({"success": False, "stage": "form_parse", "error": str(exc)}), 400
+
         try:
             started = time.perf_counter()
             page = notion.create_result(form)
