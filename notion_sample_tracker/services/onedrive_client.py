@@ -38,12 +38,6 @@ class OneDriveClient:
         self.refresh_token = refresh_token
         self.timeout = timeout
         self._delegated_access_token = ""
-        if self.auth_mode == "client_credentials" and not self.drive_id:
-            raise RuntimeError(
-                "ONEDRIVE_DRIVE_ID is required for server-side Microsoft Graph uploads with client-credentials auth."
-            )
-        if self.auth_mode == "delegated_refresh" and not self.refresh_token:
-            raise RuntimeError("ONEDRIVE_REFRESH_TOKEN is required when ONEDRIVE_AUTH_MODE=delegated_refresh.")
 
     def upload_json(self, relative_path: str, payload: dict) -> UploadResult:
         content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
@@ -53,6 +47,7 @@ class OneDriveClient:
         return self.upload_bytes(relative_path, file_obj.read(), content_type)
 
     def upload_bytes(self, relative_path: str, content: bytes, content_type: str = "application/octet-stream") -> UploadResult:
+        self._validate_config()
         token = self._access_token()
         path = self._remote_path(relative_path)
         self._ensure_parent_folders(token, path)
@@ -71,6 +66,7 @@ class OneDriveClient:
         return UploadResult(path=path, web_url=data.get("webUrl", ""))
 
     def create_upload_session(self, relative_path: str) -> dict:
+        self._validate_config()
         token = self._access_token()
         path = self._remote_path(relative_path)
         self._ensure_parent_folders(token, path)
@@ -95,6 +91,15 @@ class OneDriveClient:
         if self.auth_mode == "delegated_refresh" and not self.drive_id:
             return f"{GRAPH_ROOT}/me/drive"
         return f"{GRAPH_ROOT}/drives/{self.drive_id}"
+
+    def _validate_config(self) -> None:
+        if self.auth_mode == "client_credentials" and not self.drive_id:
+            raise RuntimeError(
+                "OneDrive is configured for client_credentials but ONEDRIVE_DRIVE_ID is missing. "
+                "Set ONEDRIVE_DRIVE_ID, or set ONEDRIVE_AUTH_MODE=delegated_refresh with ONEDRIVE_REFRESH_TOKEN."
+            )
+        if self.auth_mode == "delegated_refresh" and not self.refresh_token:
+            raise RuntimeError("ONEDRIVE_REFRESH_TOKEN is required when ONEDRIVE_AUTH_MODE=delegated_refresh.")
 
     def _ensure_parent_folders(self, token: str, file_path: str) -> None:
         parts = [part for part in file_path.strip("/").split("/")[:-1] if part]
