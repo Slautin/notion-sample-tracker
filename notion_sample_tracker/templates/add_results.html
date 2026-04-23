@@ -850,7 +850,9 @@ async function createUploadSession(file) {
     filename: file.name,
     size: file.size,
     mime: file.type || 'application/octet-stream',
-    entry_name: entryName
+    entry_name: entryName,
+    parent_sample: document.getElementById('parent_sample')?.value || '',
+    parent_dataset: document.getElementById('parent_dataset')?.value || ''
   };
 
   const r = await fetch('/api/create-upload-session', {

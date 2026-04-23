@@ -217,7 +217,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             if notion.sample_exists(form.name):
                 raise ValueError(f"A sample with name '{form.name}' already exists.")
             page = notion.create_sample(form)
-            sample_folder = _sample_folder(form)
+            sample_folder = notion.sample_storage_info_from_page(page)["folder"]
             uploaded_files = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"))
             qr_name = f"{_safe_segment(form.name)}_qr.png"
             qr_bytes = make_qr_png_bytes(page["url"])
@@ -248,7 +248,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         backlog.append(BacklogEvent(action="create", entity="result", payload=_form_payload(request.form)))
         try:
             page = notion.create_result(form)
-            result_folder = f"results/{_safe_segment(form.name)}"
+            result_folder = f"{_result_parent_folder(notion, form)}/results/{_safe_segment(form.name)}"
             qr_name = f"{_safe_segment(form.name)}_qr.png"
             qr_bytes = make_qr_png_bytes(page["url"])
             qr_upload = onedrive.upload_bytes(f"{result_folder}/{qr_name}", qr_bytes, "image/png")
@@ -278,9 +278,12 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             data = request.get_json(force=True)
             filename = Path(data.get("filename", "")).name
             entry_name = _safe_segment(data.get("entry_name", "data_entry"))
+            parent_sample = data.get("parent_sample", "")
+            parent_dataset = data.get("parent_dataset", "")
             if not filename:
                 return jsonify({"success": False, "error": "filename is required"}), 400
-            session = onedrive.create_upload_session(f"results/{entry_name}/{filename}")
+            parent_folder = _result_upload_parent_folder(notion, parent_sample, parent_dataset)
+            session = onedrive.create_upload_session(f"{parent_folder}/results/{entry_name}/{filename}")
             return jsonify({"success": True, **session})
         except Exception as exc:
             return jsonify({"success": False, "error": str(exc)}), 500
@@ -346,6 +349,7 @@ def _archive_sample_photos(
     files,
 ) -> list[dict[str, str]]:
     uploaded: list[dict[str, str]] = []
+    notion_files = []
     for file_storage in files:
         if not file_storage or not file_storage.filename:
             continue
@@ -353,8 +357,9 @@ def _archive_sample_photos(
         content = file_storage.read()
         content_type = file_storage.mimetype or "application/octet-stream"
         result = onedrive.upload_bytes(f"{prefix}/{safe_name}", content, content_type)
-        notion.attach_uploaded_file(page_id, "Photos", safe_name, content, content_type)
+        notion_files.append({"name": safe_name, "content": content, "content_type": content_type})
         uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
+    notion.attach_uploaded_files(page_id, "Photos", notion_files)
     return uploaded
 
 
@@ -367,10 +372,20 @@ def _safe_segment(value: str) -> str:
     return cleaned or "entry"
 
 
-def _sample_folder(form: SampleForm) -> str:
-    composition = _safe_segment(form.composition or "sub_sample")
-    sample_name = _safe_segment(form.name)
-    return f"samples/{composition}/{sample_name}"
+def _result_parent_folder(notion: NotionRepository, form: ResultForm) -> str:
+    if form.sample_id:
+        return notion.sample_storage_info(form.sample_id)["folder"]
+    if form.related_result_id:
+        return f"results/{_safe_segment(form.related_result_id)}"
+    return "results"
+
+
+def _result_upload_parent_folder(notion: NotionRepository, parent_sample: str, parent_dataset: str) -> str:
+    if parent_sample:
+        return notion.sample_storage_info(parent_sample)["folder"]
+    if parent_dataset:
+        return f"results/{_safe_segment(parent_dataset)}"
+    return "results"
 
 
 def _notion_home_url(settings: Settings) -> str:

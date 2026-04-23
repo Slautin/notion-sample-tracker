@@ -41,6 +41,9 @@ class NotionRepository:
         properties = self._sample_properties(form, parsed, source_relations)
         return self._create_page(self.samples_db, properties)
 
+    def parse_sample_formula(self, form: SampleForm) -> ParsedFormula | None:
+        return self._parse_sample_formula(form)
+
     def update_sample(self, page_id: str, form: SampleForm) -> dict[str, Any]:
         parsed = self._parse_sample_formula(form)
         source_relations = self._source_relations(form.sources)
@@ -54,6 +57,24 @@ class NotionRepository:
 
     def sample_exists(self, name: str) -> bool:
         return self._find_by_any_title(self.samples_db, name) is not None
+
+    def sample_page_by_name(self, name: str) -> dict[str, Any] | None:
+        return self._find_by_any_title(self.samples_db, name)
+
+    def sample_storage_info(self, sample_name_or_id: str) -> dict[str, str]:
+        page_id = self._resolve_page_id(self.samples_db, sample_name_or_id)
+        return self.sample_storage_info_from_page(self.client.pages.retrieve(page_id=page_id))
+
+    def sample_storage_info_from_page(self, page: dict[str, Any]) -> dict[str, str]:
+        name = self._title_from_page(page)
+        composition = self._plain_text_property(page, "Composition") or "sub_sample"
+        parent_rel = page.get("properties", {}).get("Parent Sample", {}).get("relation", [])
+        parent_id = parent_rel[0]["id"] if parent_rel else ""
+        parent_path = ""
+        if parent_id:
+            parent_path = self.sample_storage_info(parent_id)["folder"]
+        folder = f"{parent_path}/{name}" if parent_path else f"samples/{composition}/{name}"
+        return {"id": page["id"], "name": name, "composition": composition, "folder": folder}
 
     def update_result(self, page_id: str, form: ResultForm) -> dict[str, Any]:
         source_relations = self._source_relations(form.sources)
@@ -111,6 +132,34 @@ class NotionRepository:
                     ]
                 }
             },
+        )
+
+    def attach_uploaded_files(
+        self,
+        page_id: str,
+        property_name: str,
+        files: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        if not files:
+            return None
+        uploaded_files = []
+        for item in files:
+            file_id = self._upload_file_to_notion(
+                item["name"],
+                item["content"],
+                item.get("content_type") or mimetypes.guess_type(item["name"])[0] or "application/octet-stream",
+            )
+            uploaded_files.append(
+                {
+                    "name": item["name"],
+                    "type": "file_upload",
+                    "file_upload": {"id": file_id},
+                }
+            )
+        existing_files = self._existing_files(page_id, property_name)
+        return self.client.pages.update(
+            page_id=page_id,
+            properties={property_name: {"files": existing_files + uploaded_files}},
         )
 
     def _sample_properties(self, form: SampleForm, parsed: ParsedFormula | None, source_relations: list[dict]) -> dict[str, Any]:
@@ -324,6 +373,14 @@ class NotionRepository:
             if prop.get("type") == "title":
                 return "".join(item.get("plain_text", "") for item in prop.get("title", []))
         return page["id"]
+
+    @staticmethod
+    def _plain_text_property(page: dict[str, Any], property_name: str) -> str:
+        prop = page.get("properties", {}).get(property_name, {})
+        prop_type = prop.get("type")
+        if prop_type in {"rich_text", "title"}:
+            return "".join(item.get("plain_text", "") for item in prop.get(prop_type, []))
+        return ""
 
     @staticmethod
     def _rich_text(value: str) -> dict[str, Any]:
