@@ -535,6 +535,7 @@ def _archive_sample_photos(
     started = time.perf_counter()
     uploaded: list[dict[str, str]] = []
     errors: list[str] = []
+    notion_files = []
     files = _validate_uploads(files, settings)
     for file_storage in files:
         safe_name = safe_upload_filename(file_storage.filename)
@@ -547,10 +548,11 @@ def _archive_sample_photos(
             errors.append(message)
             app_log("sample_photo_upload_failed", page_id=page_id, filename=safe_name, error=str(exc))
             continue
+        notion_files.append({"name": safe_name, "content": content, "content_type": content_type})
         uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
-    if uploaded:
+    if notion_files:
         try:
-            notion.attach_external_files(page_id, "Photos", uploaded)
+            notion.attach_uploaded_files(page_id, "Photos", notion_files)
         except Exception as exc:
             message = f"photo_attach: {exc}"
             errors.append(message)
