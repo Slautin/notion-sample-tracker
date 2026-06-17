@@ -45,6 +45,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         drive_id=settings.onedrive_drive_id,
         refresh_token=settings.onedrive_refresh_token,
         root_folder=settings.onedrive_root_folder,
+        timeout=settings.onedrive_timeout_seconds,
     )
 
     @app.get("/")
@@ -270,7 +271,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                 page = notion.create_sample(form)
                 app_log("notion_sample_created", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
             sample_folder = notion.sample_storage_info_from_page(page)["folder"]
-            uploaded_files = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"), settings)
+            uploaded_files, photo_errors = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"), settings)
             qr_name = f"{_safe_segment(form.name)}_qr.png"
             qr_bytes = make_qr_png_bytes(page["url"])
             started = time.perf_counter()
@@ -280,9 +281,19 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             started = time.perf_counter()
             snapshot = onedrive.upload_json(
                 f"{sample_folder}/record.json",
-                {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "files": uploaded_files, "qr": qr_upload.path},
+                {
+                    "form": form.to_dict(),
+                    "raw_form": _form_payload(request.form),
+                    "notion": page,
+                    "files": uploaded_files,
+                    "photo_errors": photo_errors,
+                    "qr": qr_upload.path,
+                },
             )
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
+            if photo_errors:
+                _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, "; ".join(photo_errors))
+            else:
+                notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
             app_log("sample_snapshot_uploaded", seconds=round(time.perf_counter() - started, 3))
             backlog.append(
                 BacklogEvent(
@@ -291,16 +302,18 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     payload=form.to_dict(),
                     notion_page_id=page["id"],
                     onedrive_paths=[snapshot.path, qr_upload.path, *[item["path"] for item in uploaded_files]],
-                    status="complete",
+                    status="partial" if photo_errors else "complete",
+                    error="; ".join(photo_errors),
                 )
             )
-            return jsonify(
-                {
-                    "success": True,
-                    "message": "Sample submitted successfully",
-                    "receipt": _sample_receipt(form, page),
-                }
-            )
+            response = {
+                "success": True,
+                "message": "Sample submitted successfully" if not photo_errors else "Sample saved in Notion; some photo archive uploads failed.",
+                "receipt": _sample_receipt(form, page),
+            }
+            if photo_errors:
+                response["warning"] = "; ".join(photo_errors)
+            return jsonify(response)
         except Exception as exc:
             if page:
                 _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, str(exc))
@@ -505,21 +518,34 @@ def _archive_sample_photos(
     prefix: str,
     files,
     settings: Settings,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], list[str]]:
     started = time.perf_counter()
     uploaded: list[dict[str, str]] = []
+    errors: list[str] = []
     notion_files = []
     files = _validate_uploads(files, settings)
     for file_storage in files:
         safe_name = safe_upload_filename(file_storage.filename)
         content = file_storage.read()
         content_type = file_storage.mimetype or "application/octet-stream"
-        result = onedrive.upload_bytes(f"{prefix}/{safe_name}", content, content_type)
+        try:
+            result = onedrive.upload_bytes(f"{prefix}/{safe_name}", content, content_type)
+        except Exception as exc:
+            message = f"photo_upload:{safe_name}: {exc}"
+            errors.append(message)
+            app_log("sample_photo_upload_failed", page_id=page_id, filename=safe_name, error=str(exc))
+            continue
         notion_files.append({"name": safe_name, "content": content, "content_type": content_type})
         uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
-    notion.attach_uploaded_files(page_id, "Photos", notion_files)
-    app_log("sample_photos_uploaded", seconds=round(time.perf_counter() - started, 3), count=len(uploaded))
-    return uploaded
+    if notion_files:
+        try:
+            notion.attach_uploaded_files(page_id, "Photos", notion_files)
+        except Exception as exc:
+            message = f"photo_attach: {exc}"
+            errors.append(message)
+            app_log("sample_photo_attach_failed", page_id=page_id, error=str(exc))
+    app_log("sample_photos_uploaded", seconds=round(time.perf_counter() - started, 3), count=len(uploaded), errors=len(errors))
+    return uploaded, errors
 
 
 def _validate_sample_form(form: SampleForm, notion: NotionRepository) -> None:

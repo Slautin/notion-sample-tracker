@@ -100,6 +100,7 @@ class Settings:
     backlog_dir: Path
     max_upload_mb: int
     app_env: str = "development"
+    onedrive_timeout_seconds: int = 20
     enable_backlog_view: bool = False
     backlog_read_limit: int = 50
     max_upload_files: int = 12
@@ -128,6 +129,7 @@ class Settings:
             onedrive_drive_id=_optional("ONEDRIVE_DRIVE_ID"),
             onedrive_refresh_token=_optional("ONEDRIVE_REFRESH_TOKEN"),
             onedrive_root_folder=_optional("ONEDRIVE_ROOT_FOLDER", "SampleTracker"),
+            onedrive_timeout_seconds=_int("ONEDRIVE_TIMEOUT_SECONDS", 20),
             backlog_dir=_backlog_dir(app_env),
             max_upload_mb=_int("MAX_UPLOAD_MB", 200),
             app_env=app_env,
@@ -173,3 +175,5 @@ class Settings:
             raise RuntimeError("ONEDRIVE_DRIVE_ID is required when ONEDRIVE_AUTH_MODE=client_credentials.")
         if self.onedrive_auth_mode == "delegated_refresh" and not self.onedrive_refresh_token:
             raise RuntimeError("ONEDRIVE_REFRESH_TOKEN is required when ONEDRIVE_AUTH_MODE=delegated_refresh.")
+        if self.onedrive_timeout_seconds <= 0:
+            raise RuntimeError("ONEDRIVE_TIMEOUT_SECONDS must be greater than zero.")

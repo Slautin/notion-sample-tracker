@@ -81,3 +81,12 @@ def test_upload_file_limit_must_fit_total_limit(monkeypatch):
 
     with pytest.raises(RuntimeError, match="MAX_UPLOAD_FILE_MB"):
         Settings.from_env()
+
+
+def test_onedrive_timeout_is_configurable(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("ONEDRIVE_TIMEOUT_SECONDS", "7")
+
+    settings = Settings.from_env()
+
+    assert settings.onedrive_timeout_seconds == 7

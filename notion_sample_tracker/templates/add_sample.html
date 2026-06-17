@@ -1279,14 +1279,18 @@
 
         ensureSubmissionId();
 
-        function showSubmissionSuccess(message, receipt) {
+        function showSubmissionSuccess(message, receipt, warning) {
             latestReceipt = receipt || null;
             const messageDiv = document.getElementById('message');
             messageDiv.style.display = 'block';
             messageDiv.className = 'message success';
+            const warningHtml = warning
+                ? `<div class="file-info"><strong>Archive warning:</strong> ${escapeHtml(warning)}</div>`
+                : '';
             messageDiv.innerHTML = `
                 <strong>${escapeHtml(message || 'Submission complete')}</strong>
                 <div class="file-info">The record was saved. You can download a PDF receipt for your records.</div>
+                ${warningHtml}
                 <div class="receipt-actions">
                     <button type="button" class="btn btn-secondary" onclick="downloadReceiptPdf()">Download PDF receipt</button>
                 </div>
@@ -1398,7 +1402,7 @@
                     if (result.receipt) {
                         result.receipt.images = await receiptPreviewsFromPhotos();
                     }
-                    showSubmissionSuccess(result.message, result.receipt);
+                    showSubmissionSuccess(result.message, result.receipt, result.warning);
 
                     document.getElementById('sampleForm').reset();
 
