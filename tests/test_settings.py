@@ -51,6 +51,18 @@ def test_production_rejects_localhost_public_url(monkeypatch):
         Settings.from_env()
 
 
+def test_production_relative_backlog_dir_uses_data_directory(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("APP_SECRET_KEY", "x" * 32)
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://sample-tracker.example")
+    monkeypatch.setenv("BACKLOG_DIR", "backlog")
+
+    settings = Settings.from_env()
+
+    assert str(settings.backlog_dir) == "/data/backlog"
+
+
 def test_upload_file_limit_must_fit_total_limit(monkeypatch):
     _set_required(monkeypatch)
     monkeypatch.setenv("MAX_UPLOAD_MB", "10")

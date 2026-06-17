@@ -70,6 +70,14 @@ def _extensions(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+def _backlog_dir(app_env: str) -> Path:
+    raw = _optional("BACKLOG_DIR", "/data/backlog" if app_env in PRODUCTION_ENVS else "./backlog")
+    path = Path(raw)
+    if app_env in PRODUCTION_ENVS and not path.is_absolute():
+        return Path("/data") / path
+    return path
+
+
 @dataclass(frozen=True)
 class Settings:
     app_secret_key: str
@@ -118,7 +126,7 @@ class Settings:
             onedrive_drive_id=_optional("ONEDRIVE_DRIVE_ID"),
             onedrive_refresh_token=_optional("ONEDRIVE_REFRESH_TOKEN"),
             onedrive_root_folder=_optional("ONEDRIVE_ROOT_FOLDER", "SampleTracker"),
-            backlog_dir=Path(_optional("BACKLOG_DIR", "./backlog")),
+            backlog_dir=_backlog_dir(app_env),
             max_upload_mb=_int("MAX_UPLOAD_MB", 200),
             app_env=app_env,
             enable_backlog_view=_bool("ENABLE_BACKLOG_VIEW", False),
