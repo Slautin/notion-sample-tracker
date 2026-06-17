@@ -4,6 +4,7 @@ import json
 import io
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -233,7 +234,10 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     def api_validate_sample():
         try:
             form = SampleForm.from_form(request.form)
-            _validate_sample_form(form, notion)
+            _validate_sample_form(form, notion, allow_existing_name=True)
+            duplicate = _sample_duplicate_info(form, notion)
+            if duplicate:
+                return jsonify(_duplicate_sample_response(duplicate)), 409
             return jsonify({"success": True})
         except Exception as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
@@ -252,7 +256,16 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         backlog.append(BacklogEvent(action="create", entity="sample", payload=_form_payload(request.form)))
         page: dict[str, Any] | None = None
         try:
-            _validate_sample_form(form, notion)
+            amend_existing = _truthy(request.form.get("amend_existing"))
+            existing_sample_id = str(request.form.get("existing_sample_id") or "").strip()
+            _validate_sample_form(form, notion, allow_existing_name=True)
+            duplicate = _sample_duplicate_info(form, notion)
+            if duplicate:
+                if not amend_existing:
+                    return jsonify(_duplicate_sample_response(duplicate)), 409
+                if existing_sample_id != duplicate["page"]["id"]:
+                    raise ValueError("Duplicate sample confirmation did not match the existing Notion record.")
+                return _submit_sample_amendment(form, duplicate, notion, onedrive, backlog, settings)
             page = notion.sample_page_by_submission(form.submission_id)
             if page and notion.archive_status_from_page(page) == ARCHIVE_COMPLETE:
                 return jsonify(
@@ -546,7 +559,152 @@ def _archive_sample_photos(
     return uploaded, errors
 
 
-def _validate_sample_form(form: SampleForm, notion: NotionRepository) -> None:
+def _submit_sample_amendment(
+    form: SampleForm,
+    duplicate: dict[str, Any],
+    notion: NotionRepository,
+    onedrive: OneDriveClient,
+    backlog: JsonlBacklog,
+    settings: Settings,
+):
+    page = duplicate["page"]
+    changes = duplicate["changes"]
+    sample_folder = notion.sample_storage_info_from_page(page)["folder"]
+    revision_id = _revision_id()
+    revision_prefix = f"{sample_folder}/revisions/{revision_id}"
+    changed_fields = [item["field"] for item in changes]
+
+    if not changed_fields and not request.files.getlist("photos"):
+        return jsonify(
+            {
+                "success": True,
+                "no_changes": True,
+                "message": "No changes detected. Existing sample left unchanged.",
+                "receipt": _sample_receipt(form, page, record_type="Sample Amendment"),
+            }
+        )
+
+    updated_page = notion.update_sample_fields(page["id"], form, changed_fields)
+    uploaded_files, photo_errors = _archive_sample_photos(
+        notion,
+        onedrive,
+        page["id"],
+        f"{revision_prefix}/photos",
+        request.files.getlist("photos"),
+        settings,
+    )
+    revision_payload = {
+        "revision_id": revision_id,
+        "amended_at": datetime.now(timezone.utc).isoformat(),
+        "form": form.to_dict(),
+        "raw_form": _form_payload(request.form),
+        "notion_page_id": page["id"],
+        "notion_page_url": page.get("url", ""),
+        "changed_fields": changes,
+        "new_files": uploaded_files,
+        "photo_errors": photo_errors,
+    }
+    revision_record = onedrive.upload_json(f"{revision_prefix}/record.json", revision_payload)
+    changed_record = onedrive.upload_json(f"{revision_prefix}/changed_fields.json", {"revision_id": revision_id, "changed_fields": changes})
+    files_record = onedrive.upload_json(f"{revision_prefix}/new_files.json", {"revision_id": revision_id, "files": uploaded_files})
+    current_record = onedrive.upload_json(f"{sample_folder}/current/record.json", revision_payload)
+
+    if photo_errors:
+        _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, "; ".join(photo_errors))
+    else:
+        notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
+    backlog.append(
+        BacklogEvent(
+            action="amend",
+            entity="sample",
+            payload=form.to_dict(),
+            notion_page_id=page["id"],
+            onedrive_paths=[
+                revision_record.path,
+                changed_record.path,
+                files_record.path,
+                current_record.path,
+                *[item["path"] for item in uploaded_files],
+            ],
+            status="partial" if photo_errors else "complete",
+            error="; ".join(photo_errors),
+        )
+    )
+    response = {
+        "success": True,
+        "amended": True,
+        "message": "Sample amended successfully" if not photo_errors else "Sample amended in Notion; some photo archive uploads failed.",
+        "revision_id": revision_id,
+        "changed_fields": changes,
+        "receipt": _sample_receipt(form, updated_page, record_type="Sample Amendment", extra_rows=[["Revision ID", revision_id], ["Changed Fields", [item["field"] for item in changes]]]),
+    }
+    if photo_errors:
+        response["warning"] = "; ".join(photo_errors)
+    return jsonify(response)
+
+
+def _sample_duplicate_info(form: SampleForm, notion: NotionRepository) -> dict[str, Any] | None:
+    existing = notion.sample_page_by_name(form.name)
+    if not existing:
+        return None
+    if form.submission_id:
+        existing_submission = notion.sample_page_by_submission(form.submission_id)
+        if existing_submission and existing_submission.get("id") == existing.get("id") and _sample_submission_matches_page(form, existing_submission):
+            return None
+    return {"page": existing, "changes": _sample_field_changes(form, existing)}
+
+
+def _duplicate_sample_response(duplicate: dict[str, Any]) -> dict[str, Any]:
+    page = duplicate["page"]
+    return {
+        "success": False,
+        "duplicate": True,
+        "message": f"A sample named '{_page_title(page)}' already exists.",
+        "existing_sample": {
+            "page_id": page["id"],
+            "url": page.get("url", ""),
+            "name": _page_title(page),
+        },
+        "changes": duplicate["changes"],
+    }
+
+
+def _sample_field_changes(form: SampleForm, page: dict[str, Any]) -> list[dict[str, Any]]:
+    comparisons = [
+        ("Sample Type", form.sample_type, _page_select(page, "Sample Type"), "text"),
+        ("Composition", form.composition, _page_text(page, "Composition"), "optional_text"),
+        ("Parent Sample", form.parent_sample_id, _page_relation_id(page, "Parent Sample"), "optional_text"),
+        ("Synthesis", form.synthesis, _page_multi_select(page, "Synthesis"), "set"),
+        ("Synthesis Details", form.synthesis_details, _page_text(page, "Synthesis Details"), "optional_text"),
+        ("Processing", form.processing, _page_multi_select(page, "Processing"), "set"),
+        ("Processing Details", form.processing_details, _page_text(page, "Processing Details"), "optional_text"),
+        ("Status", form.status, _page_select(page, "Status"), "optional_text"),
+    ]
+    changes: list[dict[str, Any]] = []
+    for field, new_value, old_value, mode in comparisons:
+        changed = _values_differ(new_value, old_value, mode)
+        if changed:
+            changes.append({"field": field, "old": old_value, "new": new_value})
+    return changes
+
+
+def _values_differ(new_value: Any, old_value: Any, mode: str) -> bool:
+    if mode == "set":
+        return not _same_set(list(new_value or []), list(old_value or []))
+    if mode == "optional_text" and not str(new_value or "").strip():
+        return False
+    return not _same_text(str(new_value or ""), str(old_value or ""))
+
+
+def _revision_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _validate_sample_form(form: SampleForm, notion: NotionRepository, allow_existing_name: bool = False) -> None:
     errors = []
     if not form.name:
         errors.append("Sample Name is required.")
@@ -569,7 +727,7 @@ def _validate_sample_form(form: SampleForm, notion: NotionRepository) -> None:
                 "This loaded JSON was already submitted and no longer matches the existing Notion record. "
                 "Load it as a new submission or change the sample name."
             )
-    if notion.sample_exists(form.name):
+    if not allow_existing_name and notion.sample_exists(form.name):
         raise ValueError(f"A sample with name '{form.name}' already exists. Please choose another name.")
 
 
@@ -628,6 +786,12 @@ def _page_multi_select(page: dict[str, Any], property_name: str) -> list[str]:
     return []
 
 
+def _page_relation_id(page: dict[str, Any], property_name: str) -> str:
+    prop = page.get("properties", {}).get(property_name, {})
+    relation = prop.get("relation", []) if prop.get("type") == "relation" else []
+    return relation[0].get("id", "") if relation else ""
+
+
 def _validate_result_raw(raw_form: dict[str, Any], notion: NotionRepository, preflight: bool) -> None:
     name = str(raw_form.get("name") or "").strip()
     entry_type = str(raw_form.get("entry_type") or "").strip()
@@ -664,21 +828,29 @@ def _validate_result_raw(raw_form: dict[str, Any], notion: NotionRepository, pre
         raise ValueError(f"A result with name '{name}' already exists. Please choose another name.")
 
 
-def _sample_receipt(form: SampleForm, page: dict[str, Any]) -> dict[str, Any]:
+def _sample_receipt(
+    form: SampleForm,
+    page: dict[str, Any],
+    record_type: str = "Sample",
+    extra_rows: list[list[Any]] | None = None,
+) -> dict[str, Any]:
+    rows = [
+        ["Record Type", record_type],
+        ["Name", form.name],
+        ["Sample Type", form.sample_type],
+        ["Composition", form.composition],
+        ["Parent Sample", form.parent_sample_id],
+        ["Synthesis", form.synthesis],
+        ["Processing", form.processing],
+        ["Status", form.status],
+        ["Submission ID", form.submission_id],
+        ["Notion URL", page.get("url", "")],
+    ]
+    if extra_rows:
+        rows.extend(extra_rows)
     return {
-        "title": f"Sample Submission - {form.name}",
-        "rows": [
-            ["Record Type", "Sample"],
-            ["Name", form.name],
-            ["Sample Type", form.sample_type],
-            ["Composition", form.composition],
-            ["Parent Sample", form.parent_sample_id],
-            ["Synthesis", form.synthesis],
-            ["Processing", form.processing],
-            ["Status", form.status],
-            ["Submission ID", form.submission_id],
-            ["Notion URL", page.get("url", "")],
-        ],
+        "title": f"{record_type} - {form.name}" if record_type != "Sample" else f"Sample Submission - {form.name}",
+        "rows": rows,
     }
 
 

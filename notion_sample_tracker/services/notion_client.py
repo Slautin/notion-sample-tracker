@@ -56,6 +56,12 @@ class NotionRepository:
         properties = self._sample_properties(form, parsed, source_relations)
         return self.client.pages.update(page_id=page_id, properties=properties)
 
+    def update_sample_fields(self, page_id: str, form: SampleForm, field_names: list[str]) -> dict[str, Any]:
+        properties = self._sample_amendment_properties(form, set(field_names))
+        if not properties:
+            return self.client.pages.retrieve(page_id=page_id)
+        return self.client.pages.update(page_id=page_id, properties=properties)
+
     def create_result(self, form: ResultForm) -> dict[str, Any]:
         source_relations = self._source_relations(form.sources)
         properties = self._result_properties(form, source_relations)
@@ -248,6 +254,31 @@ class NotionRepository:
             properties["Status"] = {"select": {"name": form.status}}
         if source_relations:
             properties["Source"] = {"relation": source_relations}
+        return properties
+
+    def _sample_amendment_properties(self, form: SampleForm, field_names: set[str]) -> dict[str, Any]:
+        properties: dict[str, Any] = {"Submission ID": self._rich_text(form.submission_id)}
+        if "Sample Type" in field_names:
+            properties["Sample Type"] = {"select": {"name": form.sample_type}} if form.sample_type else {"select": None}
+        if "Composition" in field_names:
+            parsed = self._parse_sample_formula(form) if form.composition else None
+            properties["Composition"] = self._rich_text(parsed.normalized_formula if parsed else form.composition)
+            properties["Elements"] = {"multi_select": [{"name": element} for element in parsed.elements]} if parsed else {"multi_select": []}
+        if "Parent Sample" in field_names:
+            parent_id = self._resolve_page_id(self.samples_db, form.parent_sample_id) if form.parent_sample_id else ""
+            properties["Parent Sample"] = {"relation": [{"id": parent_id}]} if parent_id else {"relation": []}
+        if "Synthesis" in field_names:
+            properties["Synthesis"] = self._multi_select(form.synthesis) if form.synthesis else {"multi_select": []}
+        if "Synthesis Details" in field_names:
+            properties["Synthesis Details"] = self._rich_text(form.synthesis_details)
+        if "Processing" in field_names:
+            properties["Processing"] = self._multi_select(form.processing) if form.processing else {"multi_select": []}
+        if "Processing Details" in field_names:
+            properties["Processing Details"] = self._rich_text(form.processing_details)
+        if "Status" in field_names:
+            properties["Status"] = {"select": {"name": form.status}} if form.status else {"select": None}
+        if "Source" in field_names:
+            properties["Source"] = {"relation": self._source_relations(form.sources)}
         return properties
 
     def _result_properties(self, form: ResultForm, source_relations: list[dict]) -> dict[str, Any]:

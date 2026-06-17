@@ -1361,9 +1361,13 @@
                 body: formData
             });
             const result = await readJsonResponse(response);
+            if (response.status === 409 && result.duplicate) {
+                return result;
+            }
             if (!response.ok || !result.success) {
                 throw new Error(result.error || 'Please fill required fields before uploading files.');
             }
+            return result;
         }
 
         async function readJsonResponse(response) {
@@ -1389,6 +1393,25 @@
             document.getElementById('submitBtn').textContent = isBusy ? 'Submitting...' : '✓ Submit to Database';
         }
 
+        function confirmDuplicateAmendment(duplicate) {
+            const changes = (duplicate.changes || []).map(change => `- ${change.field}`).join('\n') || '- No field changes detected';
+            return window.confirm(
+                `A sample named "${duplicate.existing_sample?.name || 'this name'}" already exists.\n\n` +
+                `Fields that would change:\n${changes}\n\n` +
+                'Do you want to amend the existing Notion entry? Existing OneDrive JSON and files will be preserved.'
+            );
+        }
+
+        function showRenameDuplicateMessage(duplicate) {
+            setSampleFormBusy(false);
+            const messageDiv = document.getElementById('message');
+            messageDiv.style.display = 'block';
+            messageDiv.className = 'message error';
+            messageDiv.textContent = `A sample named "${duplicate.existing_sample?.name || 'this name'}" already exists. Please change the sample name.`;
+            document.getElementById('sample_name').focus();
+            messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
         document.getElementById('sampleForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -1409,7 +1432,16 @@
             messageDiv.style.display = 'none';
 
             try {
-                await validateSampleBeforeUpload(formData);
+                const validation = await validateSampleBeforeUpload(formData);
+                if (validation.duplicate) {
+                    if (!confirmDuplicateAmendment(validation)) {
+                        showRenameDuplicateMessage(validation);
+                        setSampleFormBusy(false);
+                        return;
+                    }
+                    formData.append('amend_existing', 'true');
+                    formData.append('existing_sample_id', validation.existing_sample.page_id);
+                }
             } catch (error) {
                 messageDiv.style.display = 'block';
                 messageDiv.className = 'message error';
@@ -1433,6 +1465,36 @@
                 const result = await readJsonResponse(response);
 
                 messageDiv.style.display = 'block';
+                if (response.status === 409 && result.duplicate) {
+                    if (confirmDuplicateAmendment(result)) {
+                        formData.set('amend_existing', 'true');
+                        formData.set('existing_sample_id', result.existing_sample.page_id);
+                        const retry = await fetch('/api/submit', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const retryResult = await readJsonResponse(retry);
+                        if (!retry.ok || !retryResult.success) {
+                            throw new Error(retryResult.error || 'Amendment failed');
+                        }
+                        if (retryResult.receipt) {
+                            retryResult.receipt.images = await receiptPreviewsFromPhotos();
+                        }
+                        showSubmissionSuccess(retryResult.message, retryResult.receipt, retryResult.warning);
+                        document.getElementById('sampleForm').reset();
+                        selectedProcessing = [];
+                        selectedSources = [];
+                        updateSelectedProcessingList();
+                        updateProcessingHiddenInput();
+                        updateSelectedSourcesList();
+                        updateSourcesHiddenInput();
+                        clearAllPhotos();
+                        toggleSampleType();
+                    } else {
+                        showRenameDuplicateMessage(result);
+                    }
+                    return;
+                }
                 if (response.ok && result.success) {
                     if (result.receipt) {
                         result.receipt.images = await receiptPreviewsFromPhotos();
