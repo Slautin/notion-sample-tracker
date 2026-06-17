@@ -657,6 +657,11 @@
             font-size: 14px;
         }
 
+        form.is-submitting {
+            opacity: 0.72;
+            pointer-events: none;
+        }
+
         @media (max-width: 720px) {
             .container {
                 padding: 22px;
@@ -1345,10 +1350,33 @@
                 method: 'POST',
                 body: formData
             });
-            const result = await response.json().catch(() => ({}));
+            const result = await readJsonResponse(response);
             if (!response.ok || !result.success) {
                 throw new Error(result.error || 'Please fill required fields before uploading files.');
             }
+        }
+
+        async function readJsonResponse(response) {
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                return response.json();
+            }
+            const text = await response.text();
+            const preview = text.replace(/\s+/g, ' ').trim().slice(0, 120);
+            throw new Error(
+                response.ok
+                    ? 'The server returned a non-JSON response.'
+                    : `The server returned ${response.status}. ${preview || 'Please try again.'}`
+            );
+        }
+
+        function setSampleFormBusy(isBusy) {
+            const form = document.getElementById('sampleForm');
+            form.classList.toggle('is-submitting', isBusy);
+            form.querySelectorAll('input, select, textarea, button').forEach((element) => {
+                element.disabled = isBusy;
+            });
+            document.getElementById('submitBtn').textContent = isBusy ? 'Submitting...' : '✓ Submit to Database';
         }
 
         document.getElementById('sampleForm').addEventListener('submit', async (e) => {
@@ -1365,12 +1393,10 @@
                 return;
             }
 
-            submitBtn.disabled = true;
-            submitBtn.textContent = '⏳ Submitting...';
-            messageDiv.style.display = 'none';
-
             ensureSubmissionId();
             const formData = new FormData(e.target);
+            setSampleFormBusy(true);
+            messageDiv.style.display = 'none';
 
             try {
                 await validateSampleBeforeUpload(formData);
@@ -1379,8 +1405,7 @@
                 messageDiv.className = 'message error';
                 messageDiv.textContent = error.message;
                 messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                submitBtn.disabled = false;
-                submitBtn.textContent = '✓ Submit to Database';
+                setSampleFormBusy(false);
                 return;
             }
 
@@ -1395,7 +1420,7 @@
                     body: formData
                 });
 
-                const result = await response.json();
+                const result = await readJsonResponse(response);
 
                 messageDiv.style.display = 'block';
                 if (response.ok && result.success) {
@@ -1427,8 +1452,7 @@
                 messageDiv.textContent = '✗ Error: ' + error.message;
                 messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } finally {
-                submitBtn.disabled = false;
-                submitBtn.textContent = '✓ Submit to Database';
+                setSampleFormBusy(false);
             }
         });
 

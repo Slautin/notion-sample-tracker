@@ -12,7 +12,7 @@ class FakeNotion:
     def __init__(self):
         self.attached = []
 
-    def attach_uploaded_files(self, page_id, property_name, files):
+    def attach_external_files(self, page_id, property_name, files):
         self.attached.append((page_id, property_name, files))
 
 
@@ -72,3 +72,4 @@ def test_sample_photo_upload_success_attaches_to_notion(tmp_path):
     assert uploaded[0]["path"] == "SampleTracker/samples/S1/photos/sample.png"
     assert notion.attached[0][0] == "page-id"
     assert notion.attached[0][1] == "Photos"
+    assert notion.attached[0][2][0]["url"] == "https://example.com/photo"
