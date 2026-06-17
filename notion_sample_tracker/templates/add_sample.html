@@ -90,6 +90,17 @@
         }
 
         .upload-btn:hover { background: #404041; }
+        .upload-btn:disabled {
+            background: #9aa0a6;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .upload-section.is-disabled {
+            opacity: 0.72;
+            pointer-events: none;
+        }
+
         #jsonFileInput { display: none; }
 
         .form-group { margin-bottom: 28px; }
@@ -865,6 +876,7 @@
         let selectedSources = [];
         let selectedProcessing = [];
         let sourceFormCounter = 0;
+        let sampleFormBusy = false;
 
         // Q7 state: we keep a list of entries so we can show thumbnails and remove them safely.
         // entry: { file: File, id: string, previewUrl: string|null, isImage: boolean }
@@ -1385,11 +1397,13 @@
         }
 
         function setSampleFormBusy(isBusy) {
+            sampleFormBusy = isBusy;
             const form = document.getElementById('sampleForm');
             form.classList.toggle('is-submitting', isBusy);
             form.querySelectorAll('input, select, textarea, button').forEach((element) => {
                 element.disabled = isBusy;
             });
+            document.querySelector('.upload-section').classList.toggle('is-disabled', isBusy);
             document.getElementById('uploadJsonBtn').disabled = isBusy;
             document.getElementById('jsonFileInput').disabled = isBusy;
             document.getElementById('submitBtn').textContent = isBusy ? 'Submitting...' : '✓ Submit to Database';
@@ -1572,6 +1586,10 @@
         // Load from JSON
         // =========================
         async function loadFromJSON(event) {
+            if (sampleFormBusy) {
+                event.target.value = '';
+                return;
+            }
             const file = event.target.files[0];
             if (!file) return;
 
