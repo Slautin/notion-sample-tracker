@@ -7,10 +7,9 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 
-from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, ResultForm, SampleForm
-from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, safe_path_segment, safe_upload_filename
+from notion_sample_tracker.models import BacklogEvent, ResultForm, SampleForm
 from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
 from notion_sample_tracker.services.notion_client import NotionRepository
@@ -25,7 +24,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     app = Flask(__name__)
     app.config["SECRET_KEY"] = settings.app_secret_key
     app.config["MAX_CONTENT_LENGTH"] = settings.max_upload_mb * 1024 * 1024
-    app.config["SAMPLE_TRACKER_SETTINGS"] = settings
 
     formula_parser = FormulaParser()
     backlog = JsonlBacklog(settings.backlog_dir)
@@ -71,13 +69,12 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         form = SampleForm.from_form(request.form)
         event = BacklogEvent(action="create", entity="sample", payload=form.to_dict())
         backlog.append(event)
-        page: dict[str, Any] | None = None
         try:
-            _validate_sample_form(form, notion)
+            if notion.sample_exists(form.name):
+                raise ValueError(f"A sample with name '{form.name}' already exists.")
             page = notion.create_sample(form)
             snapshot_path = f"samples/{page['id']}/record.json"
             onedrive_result = onedrive.upload_json(snapshot_path, {"form": form.to_dict(), "notion": page})
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
                     action="create",
@@ -91,9 +88,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             flash("Sample created in Notion and archived to OneDrive.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
-            if page:
-                _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, str(exc))
-            backlog.append(BacklogEvent(action="create", entity="sample", payload=form.to_dict(), notion_page_id=page["id"] if page else "", status="failed", error=str(exc)))
+            backlog.append(BacklogEvent(action="create", entity="sample", payload=form.to_dict(), status="failed", error=str(exc)))
             flash(str(exc), "error")
             return render_template("sample_form.html", mode="create", sample=form, samples=_safe_list(notion.list_samples)), 400
 
@@ -108,7 +103,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         try:
             page = notion.update_sample(page_id, form)
             onedrive_result = onedrive.upload_json(f"samples/{page_id}/record.json", {"form": form.to_dict(), "notion": page})
-            notion.update_archive_status(page_id, ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
                     action="update",
@@ -122,7 +116,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             flash("Sample revised in Notion and archived to OneDrive.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
-            _safe_archive_status(notion, page_id, ARCHIVE_FAILED, str(exc))
             backlog.append(BacklogEvent(action="update", entity="sample", payload=form.to_dict(), notion_page_id=page_id, status="failed", error=str(exc)))
             flash(str(exc), "error")
             return render_template("sample_form.html", mode="edit", page_id=page_id, sample=form, samples=_safe_list(notion.list_samples)), 400
@@ -136,13 +129,10 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         form = ResultForm.from_form(request.form)
         event = BacklogEvent(action="create", entity="result", payload=form.to_dict())
         backlog.append(event)
-        page: dict[str, Any] | None = None
         try:
-            _validate_result_raw(_form_payload(request.form), notion, preflight=True)
-            uploaded_paths = _archive_uploads(onedrive, "results/pending", request.files.getlist("files"), settings)
+            uploaded_paths = _archive_uploads(onedrive, "results/pending", request.files.getlist("files"))
             page = notion.create_result(form)
             snapshot = onedrive.upload_json(f"results/{page['id']}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
                     action="create",
@@ -156,9 +146,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             flash("Data entry created in Notion and archived to OneDrive.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
-            if page:
-                _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, str(exc))
-            backlog.append(BacklogEvent(action="create", entity="result", payload=form.to_dict(), notion_page_id=page["id"] if page else "", status="failed", error=str(exc)))
+            backlog.append(BacklogEvent(action="create", entity="result", payload=form.to_dict(), status="failed", error=str(exc)))
             flash(str(exc), "error")
             return render_template("result_form.html", mode="create", result=form, samples=_safe_list(notion.list_samples), results=_safe_list(notion.list_results)), 400
 
@@ -178,10 +166,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         form = ResultForm.from_form(request.form)
         backlog.append(BacklogEvent(action="update", entity="result", payload=form.to_dict(), notion_page_id=page_id))
         try:
-            uploaded_paths = _archive_uploads(onedrive, f"results/{page_id}/files", request.files.getlist("files"), settings)
+            uploaded_paths = _archive_uploads(onedrive, f"results/{page_id}/files", request.files.getlist("files"))
             page = notion.update_result(page_id, form)
             snapshot = onedrive.upload_json(f"results/{page_id}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
-            notion.update_archive_status(page_id, ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
                     action="update",
@@ -195,17 +182,13 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             flash("Data entry revised in Notion and archived to OneDrive.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
-            _safe_archive_status(notion, page_id, ARCHIVE_FAILED, str(exc))
             backlog.append(BacklogEvent(action="update", entity="result", payload=form.to_dict(), notion_page_id=page_id, status="failed", error=str(exc)))
             flash(str(exc), "error")
             return render_template("result_form.html", mode="edit", page_id=page_id, result=form, samples=_safe_list(notion.list_samples), results=_safe_list(notion.list_results)), 400
 
     @app.get("/backlog")
     def backlog_view():
-        if not settings.enable_backlog_view:
-            abort(404)
-        limit = _bounded_int(request.args.get("limit"), default=settings.backlog_read_limit, minimum=1, maximum=250)
-        return render_template("backlog.html", samples=backlog.recent("sample", limit=limit), results=backlog.recent("result", limit=limit))
+        return render_template("backlog.html", samples=backlog.recent("sample"), results=backlog.recent("result"))
 
     @app.get("/api/options")
     def api_options():
@@ -249,28 +232,13 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     def api_submit_sample():
         form = SampleForm.from_form(request.form)
         backlog.append(BacklogEvent(action="create", entity="sample", payload=_form_payload(request.form)))
-        page: dict[str, Any] | None = None
         try:
             _validate_sample_form(form, notion)
-            page = notion.sample_page_by_submission(form.submission_id)
-            if page and notion.archive_status_from_page(page) == ARCHIVE_COMPLETE:
-                return jsonify(
-                    {
-                        "success": True,
-                        "already_processed": True,
-                        "message": "Sample submission was already processed",
-                        "receipt": _sample_receipt(form, page),
-                    }
-                )
-            if page:
-                app_log("sample_submission_retry", page_id=page["id"], submission_id=form.submission_id)
-                notion.update_archive_status(page["id"], ARCHIVE_PENDING)
-            else:
-                started = time.perf_counter()
-                page = notion.create_sample(form)
-                app_log("notion_sample_created", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
+            started = time.perf_counter()
+            page = notion.create_sample(form)
+            app_log("notion_sample_created", seconds=round(time.perf_counter() - started, 3))
             sample_folder = notion.sample_storage_info_from_page(page)["folder"]
-            uploaded_files = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"), settings)
+            uploaded_files = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"))
             qr_name = f"{_safe_segment(form.name)}_qr.png"
             qr_bytes = make_qr_png_bytes(page["url"])
             started = time.perf_counter()
@@ -282,7 +250,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                 f"{sample_folder}/record.json",
                 {"form": form.to_dict(), "raw_form": _form_payload(request.form), "notion": page, "files": uploaded_files, "qr": qr_upload.path},
             )
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
             app_log("sample_snapshot_uploaded", seconds=round(time.perf_counter() - started, 3))
             backlog.append(
                 BacklogEvent(
@@ -302,9 +269,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                 }
             )
         except Exception as exc:
-            if page:
-                _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, str(exc))
-            backlog.append(BacklogEvent(action="create", entity="sample", payload=form.to_dict(), notion_page_id=page["id"] if page else "", status="failed", error=str(exc)))
+            backlog.append(BacklogEvent(action="create", entity="sample", payload=form.to_dict(), status="failed", error=str(exc)))
             return jsonify({"success": False, "error": str(exc)}), 400
 
     @app.post("/api/submit-data")
@@ -323,25 +288,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             return jsonify({"success": False, "stage": "form_parse", "error": str(exc)}), 400
 
         try:
-            page = notion.result_page_by_submission(form.submission_id)
-            if page and notion.archive_status_from_page(page) == ARCHIVE_COMPLETE:
-                return jsonify(
-                    {
-                        "success": True,
-                        "already_processed": True,
-                        "message": "Data submission was already processed",
-                        "notion_page_id": page["id"],
-                        "notion_page_url": page.get("url", ""),
-                        "receipt": _result_receipt(form, page),
-                    }
-                )
-            if page:
-                app_log("result_submission_retry", page_id=page["id"], submission_id=form.submission_id)
-                notion.update_archive_status(page["id"], ARCHIVE_PENDING)
-            else:
-                started = time.perf_counter()
-                page = notion.create_result(form)
-                app_log("notion_result_created", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
+            started = time.perf_counter()
+            page = notion.create_result(form)
+            app_log("notion_result_created", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
         except Exception as exc:
             app_log("result_submission_failed", stage="notion_create", error=str(exc), form=raw_form)
             backlog.append(BacklogEvent(action="create", entity="result", payload=form.to_dict(), status="failed", error=f"notion_create: {exc}"))
@@ -400,9 +349,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         }
         if artifact_errors:
             response["warning"] = "; ".join(artifact_errors)
-            _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, response["warning"])
-        else:
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
         return jsonify(response)
 
     @app.post("/api/receipt-pdf")
@@ -424,17 +370,12 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     def api_create_upload_session():
         try:
             data = request.get_json(force=True)
-            filename = safe_upload_filename(data.get("filename", ""))
+            filename = Path(data.get("filename", "")).name
             entry_name = _safe_segment(data.get("entry_name", "data_entry"))
             parent_sample = data.get("parent_sample", "")
             parent_dataset = data.get("parent_dataset", "")
             if not filename:
                 return jsonify({"success": False, "error": "filename is required"}), 400
-            if not is_allowed_extension(filename, settings.allowed_upload_extensions):
-                return jsonify({"success": False, "error": f"File type is not allowed: {Path(filename).suffix.lower()}"}), 400
-            size = int(data.get("size") or data.get("file_size") or 0)
-            if size and size > settings.max_upload_file_mb * 1024 * 1024:
-                return jsonify({"success": False, "error": f"File exceeds {settings.max_upload_file_mb} MB limit."}), 400
             parent_folder = _result_upload_parent_folder(notion, parent_sample, parent_dataset)
             session = onedrive.create_upload_session(f"{parent_folder}/results/{entry_name}/{filename}")
             return jsonify({"success": True, **session})
@@ -473,10 +414,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             "public_base_url": settings.public_base_url,
         }
 
-    @app.get("/healthz")
-    def healthz():
-        return health()
-
     return app
 
 
@@ -487,11 +424,12 @@ def _safe_list(loader: Callable[[], list[dict[str, str]]]) -> list[dict[str, str
         return []
 
 
-def _archive_uploads(onedrive: OneDriveClient, prefix: str, files, settings: Settings) -> list[dict[str, str]]:
-    files = _validate_uploads(files, settings)
+def _archive_uploads(onedrive: OneDriveClient, prefix: str, files) -> list[dict[str, str]]:
     uploaded: list[dict[str, str]] = []
     for file_storage in files:
-        safe_name = safe_upload_filename(file_storage.filename)
+        if not file_storage or not file_storage.filename:
+            continue
+        safe_name = Path(file_storage.filename).name.replace("/", "_")
         result = onedrive.upload_file(f"{prefix}/{safe_name}", file_storage.stream, file_storage.mimetype)
         uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
     return uploaded
@@ -503,14 +441,14 @@ def _archive_sample_photos(
     page_id: str,
     prefix: str,
     files,
-    settings: Settings,
 ) -> list[dict[str, str]]:
     started = time.perf_counter()
     uploaded: list[dict[str, str]] = []
     notion_files = []
-    files = _validate_uploads(files, settings)
     for file_storage in files:
-        safe_name = safe_upload_filename(file_storage.filename)
+        if not file_storage or not file_storage.filename:
+            continue
+        safe_name = Path(file_storage.filename).name.replace("/", "_")
         content = file_storage.read()
         content_type = file_storage.mimetype or "application/octet-stream"
         result = onedrive.upload_bytes(f"{prefix}/{safe_name}", content, content_type)
@@ -535,8 +473,6 @@ def _validate_sample_form(form: SampleForm, notion: NotionRepository) -> None:
         errors.append("Composition is required for a root sample.")
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
-    if form.submission_id and notion.sample_page_by_submission(form.submission_id):
-        return
     if notion.sample_exists(form.name):
         raise ValueError(f"A sample with name '{form.name}' already exists. Please choose another name.")
 
@@ -570,9 +506,6 @@ def _validate_result_raw(raw_form: dict[str, Any], notion: NotionRepository, pre
         errors.append("OneDrive file link is missing. Please upload the file before submitting.")
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
-    submission_id = str(raw_form.get("submission_id") or raw_form.get("submissionId") or "").strip()
-    if submission_id and notion.result_page_by_submission(submission_id):
-        return
     if notion.result_exists(name):
         raise ValueError(f"A result with name '{name}' already exists. Please choose another name.")
 
@@ -589,7 +522,6 @@ def _sample_receipt(form: SampleForm, page: dict[str, Any]) -> dict[str, Any]:
             ["Synthesis", form.synthesis],
             ["Processing", form.processing],
             ["Status", form.status],
-            ["Submission ID", form.submission_id],
             ["Notion URL", page.get("url", "")],
         ],
     }
@@ -608,7 +540,6 @@ def _result_receipt(form: ResultForm, page: dict[str, Any]) -> dict[str, Any]:
             ["Related Result", form.related_result_id],
             ["Characterisation", form.characterization],
             ["Link", form.link],
-            ["Submission ID", form.submission_id],
             ["Notion URL", page.get("url", "")],
         ],
     }
@@ -619,49 +550,8 @@ def _form_payload(form) -> dict:
 
 
 def _safe_segment(value: str) -> str:
-    return safe_path_segment(value, fallback="entry")
-
-
-def _validate_uploads(files, settings: Settings) -> list[Any]:
-    uploads = [item for item in files if item and item.filename]
-    if len(uploads) > settings.max_upload_files:
-        raise ValueError(f"Upload limit is {settings.max_upload_files} files.")
-    max_bytes = settings.max_upload_file_mb * 1024 * 1024
-    for item in uploads:
-        filename = safe_upload_filename(item.filename)
-        if not is_allowed_extension(filename, settings.allowed_upload_extensions):
-            raise ValueError(f"File type is not allowed: {Path(filename).suffix.lower()}")
-        size = _stream_size(item)
-        if size and size > max_bytes:
-            raise ValueError(f"{filename} exceeds {settings.max_upload_file_mb} MB limit.")
-    return uploads
-
-
-def _stream_size(file_storage) -> int:
-    stream = getattr(file_storage, "stream", None)
-    try:
-        position = stream.tell()
-        stream.seek(0, os.SEEK_END)
-        size = stream.tell()
-        stream.seek(position)
-        return size
-    except Exception:
-        return int(getattr(file_storage, "content_length", 0) or 0)
-
-
-def _safe_archive_status(notion: NotionRepository, page_id: str, status: str, error: str = "") -> None:
-    try:
-        notion.update_archive_status(page_id, status, error)
-    except Exception as exc:
-        app_log("archive_status_update_failed", page_id=page_id, status=status, error=str(exc))
-
-
-def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(minimum, min(maximum, parsed))
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value or "").strip())
+    return cleaned or "entry"
 
 
 def _result_parent_folder(notion: NotionRepository, form: ResultForm) -> str:
@@ -695,4 +585,4 @@ def _url_host(url: str) -> str:
 
 
 def app_log(event: str, **fields) -> None:
-    print(json.dumps(redact_for_log({"event": event, **fields}), sort_keys=True), flush=True)
+    print(json.dumps({"event": event, **fields}, sort_keys=True), flush=True)

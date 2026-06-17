@@ -1,0 +1,12 @@
+Flask>=3.0
+gunicorn>=21.2
+notion-client>=2.2
+requests>=2.31
+python-dotenv>=1.0
+qrcode[pil]>=7.4
+monty>=2023.9.25
+numpy>=1.24
+scipy>=1.10
+
+[test]
+pytest>=8.0

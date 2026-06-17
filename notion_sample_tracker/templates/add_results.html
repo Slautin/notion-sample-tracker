@@ -529,6 +529,7 @@
       <div id="message" class="message"></div>
 
       <form id="dataForm" novalidate>
+        <input type="hidden" id="submission_id" name="submission_id">
         <!-- 1) Name -->
         <div class="form-group">
           <label for="name">1. Name <span class="required">*</span></label>
@@ -1261,6 +1262,18 @@ async function validateResultBeforeUpload(form) {
   }
 }
 
+function ensureSubmissionId() {
+  const input = document.getElementById('submission_id');
+  if (input && !input.value) {
+    input.value = (window.crypto && window.crypto.randomUUID)
+      ? window.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+  return input ? input.value : '';
+}
+
+ensureSubmissionId();
+
 document.getElementById('dataForm').addEventListener('submit', async (e) => {
   e.preventDefault();
 
@@ -1404,6 +1417,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
   submitBtn.textContent = '⏳ Submitting…';
 
   try {
+    ensureSubmissionId();
     const formData = new FormData(e.target);
 
     const r = await fetch('/api/submit-data', {

@@ -6,8 +6,7 @@ from typing import Any
 import requests
 from notion_client import Client
 
-from notion_sample_tracker.models import ARCHIVE_PENDING, PersonRef, ResultForm, SampleForm
-from notion_sample_tracker.safety import safe_path_segment
+from notion_sample_tracker.models import PersonRef, ResultForm, SampleForm
 from notion_sample_tracker.services.formula import FormulaParser, ParsedFormula
 
 
@@ -73,31 +72,6 @@ class NotionRepository:
     def result_page_by_name(self, name: str) -> dict[str, Any] | None:
         return self._find_by_any_title(self.results_db, name)
 
-    def sample_page_by_submission(self, submission_id: str) -> dict[str, Any] | None:
-        return self._find_by_rich_text(self.samples_db, "Submission ID", submission_id)
-
-    def result_page_by_submission(self, submission_id: str) -> dict[str, Any] | None:
-        return self._find_by_rich_text(self.results_db, "Submission ID", submission_id)
-
-    def update_archive_status(self, page_id: str, status: str, error: str = "") -> dict[str, Any]:
-        return self.client.pages.update(
-            page_id=page_id,
-            properties={
-                "Archive Status": {"select": {"name": status}},
-                "Archive Error": self._rich_text(error[:1900]),
-            },
-        )
-
-    @staticmethod
-    def archive_status_from_page(page: dict[str, Any]) -> str:
-        prop = page.get("properties", {}).get("Archive Status", {})
-        if prop.get("type") == "select" and prop.get("select"):
-            return prop["select"].get("name", "")
-        return ""
-
-    def retrieve_schema(self, database_id: str) -> dict[str, Any]:
-        return self._retrieve_collection(database_id)
-
     def sample_storage_info(self, sample_name_or_id: str) -> dict[str, str]:
         page_id = self._resolve_page_id(self.samples_db, sample_name_or_id)
         return self.sample_storage_info_from_page(self.client.pages.retrieve(page_id=page_id))
@@ -110,9 +84,7 @@ class NotionRepository:
         parent_path = ""
         if parent_id:
             parent_path = self.sample_storage_info(parent_id)["folder"]
-        safe_name = safe_path_segment(name, fallback="sample")
-        safe_composition = safe_path_segment(composition, fallback="composition")
-        folder = f"{parent_path}/{safe_name}" if parent_path else f"samples/{safe_composition}/{safe_name}"
+        folder = f"{parent_path}/{name}" if parent_path else f"samples/{composition}/{name}"
         return {"id": page["id"], "name": name, "composition": composition, "folder": folder}
 
     def update_result(self, page_id: str, form: ResultForm) -> dict[str, Any]:
@@ -221,8 +193,6 @@ class NotionRepository:
         properties: dict[str, Any] = {
             "Name": {"title": [{"text": {"content": form.name}}]},
             "Sample Type": {"select": {"name": form.sample_type}},
-            "Submission ID": self._rich_text(form.submission_id),
-            "Archive Status": {"select": {"name": ARCHIVE_PENDING}},
         }
         if parsed:
             properties["Composition"] = {"rich_text": [{"text": {"content": parsed.normalized_formula}}]}
@@ -259,8 +229,6 @@ class NotionRepository:
 
         properties: dict[str, Any] = {
             "Name": {"title": [{"text": {"content": form.name}}]},
-            "Submission ID": self._rich_text(form.submission_id),
-            "Archive Status": {"select": {"name": ARCHIVE_PENDING}},
         }
         if sample_relation:
             properties["Sample"] = {"relation": sample_relation}
@@ -328,13 +296,6 @@ class NotionRepository:
     def _find_by_any_title(self, database_id: str, title: str) -> dict[str, Any] | None:
         title_property = self._title_property_name(database_id)
         return self._find_by_title(database_id, title_property, title)
-
-    def _find_by_rich_text(self, database_id: str, property_name: str, value: str) -> dict[str, Any] | None:
-        if not value:
-            return None
-        response = self._query_collection(database_id, filter={"property": property_name, "rich_text": {"equals": value}}, page_size=1)
-        results = response.get("results", [])
-        return results[0] if results else None
 
     def _list_titles(self, database_id: str) -> list[dict[str, str]]:
         pages: list[dict[str, Any]] = []
@@ -432,9 +393,8 @@ class NotionRepository:
                 response = self.client.data_sources.query(data_source_id=collection_id, **kwargs)
                 self._collection_api_cache[collection_id] = "data_sources"
                 return response
-            except Exception as exc:
-                if not self._looks_like_wrong_parent_type(exc):
-                    raise
+            except Exception:
+                pass
         self._collection_api_cache[collection_id] = "databases"
         return self.client.databases.query(database_id=collection_id, **kwargs)
 
@@ -456,9 +416,8 @@ class NotionRepository:
                 self._collection_api_cache[collection_id] = "data_sources"
                 self._collection_cache[collection_id] = collection
                 return collection
-            except Exception as exc:
-                if not self._looks_like_wrong_parent_type(exc):
-                    raise
+            except Exception:
+                pass
         self._collection_api_cache[collection_id] = "databases"
         collection = self.client.databases.retrieve(database_id=collection_id)
         self._collection_cache[collection_id] = collection
@@ -503,8 +462,6 @@ class NotionRepository:
 
     @staticmethod
     def _rich_text(value: str) -> dict[str, Any]:
-        if not value:
-            return {"rich_text": []}
         return {"rich_text": [{"text": {"content": value}}]}
 
     @staticmethod

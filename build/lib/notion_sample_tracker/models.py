@@ -4,24 +4,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
 from typing import Any
-from uuid import uuid4
-
-
-ARCHIVE_PENDING = "Pending archive"
-ARCHIVE_COMPLETE = "Archive complete"
-ARCHIVE_FAILED = "Failed archive"
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def new_submission_id() -> str:
-    return uuid4().hex
-
-
-def submission_id_from_form(form: Any) -> str:
-    return (form.get("submission_id") or form.get("submissionId") or new_submission_id()).strip()
 
 
 def split_csv(value: str | None) -> list[str]:
@@ -90,7 +76,6 @@ class SampleForm:
     processing_details: str = ""
     status: str = ""
     sources: list[PersonRef] = field(default_factory=list)
-    submission_id: str = field(default_factory=new_submission_id)
 
     @classmethod
     def from_form(cls, form: Any) -> "SampleForm":
@@ -114,7 +99,6 @@ class SampleForm:
             processing_details=form.get("processing_details", "").strip(),
             status=form.get("status", "").strip(),
             sources=sources,
-            submission_id=submission_id_from_form(form),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -133,7 +117,6 @@ class ResultForm:
     link: str = ""
     related_result_id: str = ""
     sources: list[PersonRef] = field(default_factory=list)
-    submission_id: str = field(default_factory=new_submission_id)
 
     @classmethod
     def from_form(cls, form: Any) -> "ResultForm":
@@ -161,7 +144,6 @@ class ResultForm:
             link=link,
             related_result_id=related_result_id,
             sources=sources,
-            submission_id=submission_id_from_form(form),
         )
 
     def to_dict(self) -> dict[str, Any]:

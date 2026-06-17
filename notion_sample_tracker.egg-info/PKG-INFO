@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: notion-sample-tracker
+Version: 0.1.0
+Summary: Notion-centered sample and data entry tracker with web forms, OneDrive archival, and chemistry formula parsing.
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: Flask>=3.0
+Requires-Dist: gunicorn>=21.2
+Requires-Dist: notion-client>=2.2
+Requires-Dist: requests>=2.31
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: qrcode[pil]>=7.4
+Requires-Dist: monty>=2023.9.25
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.10
+Provides-Extra: test
+Requires-Dist: pytest>=8.0; extra == "test"
+
 # Notion Sample Tracker
 
 A deployable Notion-centered sample/data tracker built from the ideas in `samplenaming`, but with cleaner boundaries:
@@ -43,12 +61,6 @@ Verify the local setup with:
 pytest
 ```
 
-Verify the live Notion database schema with:
-
-```bash
-python -m notion_sample_tracker.schema_check
-```
-
 For production:
 
 ```bash
@@ -71,10 +83,6 @@ Samples database:
 - `Parent Sample` relation to Samples
 - `Source` relation to People
 - `QRCode` files
-- `Photos` files
-- `Submission ID` rich text
-- `Archive Status` select with `Pending archive`, `Archive complete`, `Failed archive`
-- `Archive Error` rich text
 
 Results database:
 
@@ -89,9 +97,6 @@ Results database:
 - `Related Results` relation to Results
 - `Source` relation to People
 - `QRCode` files
-- `Submission ID` rich text
-- `Archive Status` select with `Pending archive`, `Archive complete`, `Failed archive`
-- `Archive Error` rich text
 
 People database:
 
@@ -115,10 +120,6 @@ The services intentionally keep property names centralized in `settings.py`, so 
 Set `NOTION_HOME_URL` in production if `/` should redirect to your main Notion page. The older `NOTION_PAGE` variable name is also supported. Put links on that Notion page to `/samples/new` and `/results/new` on the deployed app domain.
 
 Set `ONEDRIVE_DRIVE_ID` in production. The app uses Microsoft Graph client-credentials auth, so uploads target `/drives/{ONEDRIVE_DRIVE_ID}` rather than `/me/drive`.
-
-Set `APP_ENV=production` in production. Production mode requires a non-default
-`APP_SECRET_KEY`, a non-local `PUBLIC_BASE_URL`, and a valid OneDrive drive ID. Keep
-`ENABLE_BACKLOG_VIEW=false` unless the app is behind a separate trusted access control.
 
 ## Stability Notes
 

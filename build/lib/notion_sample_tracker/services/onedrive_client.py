@@ -132,7 +132,7 @@ class OneDriveClient:
             json={
                 "name": name,
                 "folder": {},
-                "@microsoft.graph.conflictBehavior": "fail",
+                "@microsoft.graph.conflictBehavior": "replace",
             },
             timeout=self.timeout,
         )

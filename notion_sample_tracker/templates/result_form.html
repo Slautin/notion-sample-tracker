@@ -2,6 +2,7 @@
 {% block content %}
 <form class="panel" method="post" enctype="multipart/form-data" action="{{ url_for('create_result') if mode == 'create' else url_for('update_result', page_id=page_id) }}">
   <h1>{{ "Create Data Entry" if mode == "create" else "Revise Data Entry" }}</h1>
+  <input type="hidden" name="submission_id" value="{{ result.submission_id if result and result.submission_id else '' }}">
   <label>Name <input name="name" required value="{{ result.name if result else '' }}"></label>
   <label>Sample
     <select name="sample_id" required>
