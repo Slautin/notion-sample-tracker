@@ -73,7 +73,9 @@ def _extensions(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 def _backlog_dir(app_env: str) -> Path:
     raw = _optional("BACKLOG_DIR", "/data/backlog" if app_env in PRODUCTION_ENVS else "./backlog")
     path = Path(raw)
-    if app_env in PRODUCTION_ENVS and not path.is_absolute():
+    if not path.is_absolute() and Path("/data").exists():
+        return Path("/data") / path
+    if not path.is_absolute() and app_env in PRODUCTION_ENVS:
         return Path("/data") / path
     return path
 

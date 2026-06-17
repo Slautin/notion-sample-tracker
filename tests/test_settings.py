@@ -63,6 +63,17 @@ def test_production_relative_backlog_dir_uses_data_directory(monkeypatch):
     assert str(settings.backlog_dir) == "/data/backlog"
 
 
+def test_relative_backlog_dir_uses_existing_data_directory(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("BACKLOG_DIR", "backlog")
+    monkeypatch.setattr("notion_sample_tracker.settings.Path.exists", lambda self: str(self) == "/data")
+
+    settings = Settings.from_env()
+
+    assert str(settings.backlog_dir) == "/data/backlog"
+
+
 def test_upload_file_limit_must_fit_total_limit(monkeypatch):
     _set_required(monkeypatch)
     monkeypatch.setenv("MAX_UPLOAD_MB", "10")
