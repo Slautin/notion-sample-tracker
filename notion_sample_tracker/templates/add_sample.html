@@ -689,7 +689,7 @@
             <div class="form-note">Use a unique sample name. Root samples require a composition; sub-samples inherit the parent sample context and are stored under the parent folder.</div>
 
             <div class="upload-section">
-                <button type="button" class="upload-btn" onclick="document.getElementById('jsonFileInput').click()">
+                <button type="button" class="upload-btn" id="uploadJsonBtn" onclick="document.getElementById('jsonFileInput').click()">
                     📁 Upload from JSON File
                 </button>
                 <input type="file" id="jsonFileInput" accept=".json" onchange="loadFromJSON(event)">
@@ -1390,6 +1390,8 @@
             form.querySelectorAll('input, select, textarea, button').forEach((element) => {
                 element.disabled = isBusy;
             });
+            document.getElementById('uploadJsonBtn').disabled = isBusy;
+            document.getElementById('jsonFileInput').disabled = isBusy;
             document.getElementById('submitBtn').textContent = isBusy ? 'Submitting...' : '✓ Submit to Database';
         }
 
