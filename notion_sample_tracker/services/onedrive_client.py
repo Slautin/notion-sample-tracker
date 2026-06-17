@@ -40,6 +40,7 @@ class OneDriveClient:
         self.refresh_token = refresh_token
         self.timeout = timeout
         self._delegated_access_token = ""
+        self._known_folders: set[str] = set()
 
     def upload_json(self, relative_path: str, payload: dict) -> UploadResult:
         content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
@@ -109,9 +110,13 @@ class OneDriveClient:
         for part in parts:
             parent_path = current
             current = f"{current}/{part}" if current else part
+            if current in self._known_folders:
+                continue
             if self._path_exists(token, current):
+                self._known_folders.add(current)
                 continue
             self._create_folder(token, parent_path, part)
+            self._known_folders.add(current)
 
     def _path_exists(self, token: str, path: str) -> bool:
         url = f"{self._drive_base()}/root:/{self._quote_path(path)}:"
@@ -138,6 +143,7 @@ class OneDriveClient:
         )
         if response.status_code == 409:
             if self._path_exists(token, f"{parent_path}/{name}" if parent_path else name):
+                self._known_folders.add(f"{parent_path}/{name}" if parent_path else name)
                 return
             self._raise_for_graph_error(response, "create folder")
             return

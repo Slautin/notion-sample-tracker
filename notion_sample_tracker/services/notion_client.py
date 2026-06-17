@@ -266,6 +266,8 @@ class NotionRepository:
             properties["Elements"] = {"multi_select": [{"name": element} for element in parsed.elements]} if parsed else {"multi_select": []}
         if "Parent Sample" in field_names:
             parent_id = self._resolve_page_id(self.samples_db, form.parent_sample_id) if form.parent_sample_id else ""
+            if parent_id and parent_id == page_id:
+                raise ValueError("A sample cannot be amended to use itself as Parent Sample.")
             properties["Parent Sample"] = {"relation": [{"id": parent_id}]} if parent_id else {"relation": []}
         if "Synthesis" in field_names:
             properties["Synthesis"] = self._multi_select(form.synthesis) if form.synthesis else {"multi_select": []}

@@ -673,13 +673,14 @@ def _sample_field_changes(form: SampleForm, page: dict[str, Any]) -> list[dict[s
     comparisons = [
         ("Sample Type", form.sample_type, _page_select(page, "Sample Type"), "text"),
         ("Composition", form.composition, _page_text(page, "Composition"), "optional_text"),
-        ("Parent Sample", form.parent_sample_id, _page_relation_id(page, "Parent Sample"), "optional_text"),
         ("Synthesis", form.synthesis, _page_multi_select(page, "Synthesis"), "set"),
         ("Synthesis Details", form.synthesis_details, _page_text(page, "Synthesis Details"), "optional_text"),
         ("Processing", form.processing, _page_multi_select(page, "Processing"), "set"),
         ("Processing Details", form.processing_details, _page_text(page, "Processing Details"), "optional_text"),
         ("Status", form.status, _page_select(page, "Status"), "optional_text"),
     ]
+    if _is_subsample(form.sample_type):
+        comparisons.insert(2, ("Parent Sample", form.parent_sample_id, _page_relation_id(page, "Parent Sample"), "optional_text"))
     changes: list[dict[str, Any]] = []
     for field, new_value, old_value, mode in comparisons:
         changed = _values_differ(new_value, old_value, mode)
@@ -704,14 +705,17 @@ def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_subsample(sample_type: str) -> bool:
+    return sample_type.lower().replace("_", "-") in {"sub-sample", "sub sample", "subsample"}
+
+
 def _validate_sample_form(form: SampleForm, notion: NotionRepository, allow_existing_name: bool = False) -> None:
     errors = []
     if not form.name:
         errors.append("Sample Name is required.")
     if not form.sample_type:
         errors.append("Sample Type is required.")
-    is_subsample = form.sample_type.lower().replace("_", "-") in {"sub-sample", "sub sample", "subsample"}
-    if is_subsample:
+    if _is_subsample(form.sample_type):
         if not form.parent_sample_id:
             errors.append("Parent Sample is required for a sub-sample.")
     elif form.sample_type and not form.composition:

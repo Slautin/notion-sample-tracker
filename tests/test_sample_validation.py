@@ -59,6 +59,13 @@ def test_sample_field_changes_ignores_blank_optional_values():
     assert _sample_field_changes(form, page) == []
 
 
+def test_root_sample_changes_ignore_parent_sample_value():
+    page = _sample_page("PTO54", "Root Sample", "PbTiO3")
+    form = SampleForm(name="PTO54", sample_type="Root Sample", composition="PbTiO3", parent_sample_id="PTO54")
+
+    assert _sample_field_changes(form, page) == []
+
+
 def _sample_page(name: str, sample_type: str, composition: str) -> dict:
     return {
         "id": "page-id",
