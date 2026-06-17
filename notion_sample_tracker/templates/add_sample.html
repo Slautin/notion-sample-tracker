@@ -886,7 +886,7 @@
         async function loadOptions() {
             try {
                 const response = await fetch('/api/options');
-                const result = await response.json();
+                const result = await readJsonResponse(response);
 
                 if (result.success && result.options) {
                     populateSelect('synthesis', result.options.synthesis || []);
@@ -1272,13 +1272,23 @@
         // =========================
         let latestReceipt = null;
 
+        function newSubmissionId() {
+            return (window.crypto && window.crypto.randomUUID)
+                ? window.crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        }
+
         function ensureSubmissionId() {
             const input = document.getElementById('submission_id');
             if (input && !input.value) {
-                input.value = (window.crypto && window.crypto.randomUUID)
-                    ? window.crypto.randomUUID()
-                    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                input.value = newSubmissionId();
             }
+            return input ? input.value : '';
+        }
+
+        function resetSubmissionId() {
+            const input = document.getElementById('submission_id');
+            if (input) input.value = newSubmissionId();
             return input ? input.value : '';
         }
 
@@ -1517,6 +1527,9 @@
                     const data = result.data;
 
                     Object.keys(data).forEach(key => {
+                        if (key === 'submission_id' || key === 'submissionId') {
+                            return;
+                        }
                         if (key === 'processing_data') {
                             try {
                                 selectedProcessing = JSON.parse(data[key] || '[]');
@@ -1538,6 +1551,7 @@
                             if (element) element.value = data[key];
                         }
                     });
+                    resetSubmissionId();
 
                     toggleSampleType();
 
@@ -1546,7 +1560,7 @@
 
                     messageDiv.style.display = 'block';
                     messageDiv.className = 'message success';
-                    messageDiv.textContent = '✓ Form loaded from JSON successfully (Photos must be re-added manually).';
+                    messageDiv.textContent = '✓ Form loaded from JSON as a new submission. Photos must be re-added manually.';
                     setTimeout(() => { messageDiv.style.display = 'none'; }, 4000);
                 } else {
                     throw new Error(result.error || 'Failed to load JSON');

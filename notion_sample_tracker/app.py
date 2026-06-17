@@ -560,10 +560,72 @@ def _validate_sample_form(form: SampleForm, notion: NotionRepository) -> None:
         errors.append("Composition is required for a root sample.")
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
-    if form.submission_id and notion.sample_page_by_submission(form.submission_id):
-        return
+    if form.submission_id:
+        existing_submission = notion.sample_page_by_submission(form.submission_id)
+        if existing_submission:
+            if _sample_submission_matches_page(form, existing_submission):
+                return
+            raise ValueError(
+                "This loaded JSON was already submitted and no longer matches the existing Notion record. "
+                "Load it as a new submission or change the sample name."
+            )
     if notion.sample_exists(form.name):
         raise ValueError(f"A sample with name '{form.name}' already exists. Please choose another name.")
+
+
+def _sample_submission_matches_page(form: SampleForm, page: dict[str, Any]) -> bool:
+    checks = [
+        _same_text(form.name, _page_title(page)),
+        _same_text(form.sample_type, _page_select(page, "Sample Type")),
+        _same_optional_text(form.composition, _page_text(page, "Composition")),
+        _same_optional_text(form.status, _page_select(page, "Status")),
+        _same_set(form.synthesis, _page_multi_select(page, "Synthesis")),
+        _same_set(form.processing, _page_multi_select(page, "Processing")),
+    ]
+    return all(checks)
+
+
+def _same_text(left: str, right: str) -> bool:
+    return str(left or "").strip().casefold() == str(right or "").strip().casefold()
+
+
+def _same_optional_text(left: str, right: str) -> bool:
+    if not str(left or "").strip():
+        return True
+    return _same_text(left, right)
+
+
+def _same_set(left: list[str], right: list[str]) -> bool:
+    return {item.strip().casefold() for item in left if item.strip()} == {item.strip().casefold() for item in right if item.strip()}
+
+
+def _page_title(page: dict[str, Any]) -> str:
+    for prop in page.get("properties", {}).values():
+        if prop.get("type") == "title":
+            return "".join(item.get("plain_text", "") for item in prop.get("title", []))
+    return ""
+
+
+def _page_text(page: dict[str, Any], property_name: str) -> str:
+    prop = page.get("properties", {}).get(property_name, {})
+    prop_type = prop.get("type")
+    if prop_type in {"rich_text", "title"}:
+        return "".join(item.get("plain_text", "") for item in prop.get(prop_type, []))
+    return ""
+
+
+def _page_select(page: dict[str, Any], property_name: str) -> str:
+    prop = page.get("properties", {}).get(property_name, {})
+    if prop.get("type") == "select" and prop.get("select"):
+        return prop["select"].get("name", "")
+    return ""
+
+
+def _page_multi_select(page: dict[str, Any], property_name: str) -> list[str]:
+    prop = page.get("properties", {}).get(property_name, {})
+    if prop.get("type") == "multi_select":
+        return [item.get("name", "") for item in prop.get("multi_select", [])]
+    return []
 
 
 def _validate_result_raw(raw_form: dict[str, Any], notion: NotionRepository, preflight: bool) -> None:

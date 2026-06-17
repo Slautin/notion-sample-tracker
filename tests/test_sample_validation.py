@@ -5,8 +5,11 @@ from notion_sample_tracker.models import SampleForm
 
 
 class DuplicateSampleNotion:
+    def __init__(self, existing_submission=None):
+        self.existing_submission = existing_submission
+
     def sample_page_by_submission(self, submission_id):
-        return None
+        return self.existing_submission
 
     def sample_exists(self, name):
         return name == "PTO54"
@@ -17,3 +20,31 @@ def test_duplicate_sample_name_requires_change():
 
     with pytest.raises(ValueError, match="already exists"):
         _validate_sample_form(form, DuplicateSampleNotion())
+
+
+def test_matching_submission_id_is_allowed_as_retry():
+    page = _sample_page("PTO54", "Root Sample", "PbTiO3")
+    form = SampleForm(name="PTO54", sample_type="Root Sample", composition="PbTiO3", submission_id="old-submission")
+
+    _validate_sample_form(form, DuplicateSampleNotion(existing_submission=page))
+
+
+def test_changed_loaded_json_reusing_submission_id_is_rejected():
+    page = _sample_page("PTO54", "Root Sample", "PbTiO3")
+    form = SampleForm(name="PTO501", sample_type="Root Sample", composition="PbTiO3", submission_id="old-submission")
+
+    with pytest.raises(ValueError, match="already submitted"):
+        _validate_sample_form(form, DuplicateSampleNotion(existing_submission=page))
+
+
+def _sample_page(name: str, sample_type: str, composition: str) -> dict:
+    return {
+        "id": "page-id",
+        "properties": {
+            "Name": {"type": "title", "title": [{"plain_text": name}]},
+            "Sample Type": {"type": "select", "select": {"name": sample_type}},
+            "Composition": {"type": "rich_text", "rich_text": [{"plain_text": composition}]},
+            "Synthesis": {"type": "multi_select", "multi_select": []},
+            "Processing": {"type": "multi_select", "multi_select": []},
+        },
+    }
