@@ -81,7 +81,7 @@ def _header(
         [Paragraph("Receipt", styles["meta_label"]), Paragraph(_escape(receipt_no), styles["meta_value"])],
         [Paragraph("Generated", styles["meta_label"]), Paragraph(_escape(generated_at), styles["meta_value"])],
     ]
-    meta = Table(meta_rows, colWidths=[0.9 * inch, 1.45 * inch], hAlign="RIGHT")
+    meta = Table(meta_rows, colWidths=[0.62 * inch, 1.25 * inch], hAlign="RIGHT")
     meta.setStyle(
         TableStyle(
             [
@@ -98,16 +98,18 @@ def _header(
     if qr:
         right_items.extend([Spacer(1, 0.08 * inch), qr, Paragraph("Scan to open in Notion", styles["qr_note"])])
 
-    table = Table([[left, right_items]], colWidths=[4.15 * inch, 2.0 * inch], rowHeights=[1.48 * inch], hAlign="LEFT")
+    table = Table([[left, right_items]], colWidths=[4.0 * inch, 2.25 * inch], hAlign="LEFT")
     table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), DARK),
                 ("BOX", (0, 0), (-1, -1), 0.25, DARK),
-                ("LEFTPADDING", (0, 0), (-1, -1), 22),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 18),
-                ("TOPPADDING", (0, 0), (-1, -1), 18),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+                ("LEFTPADDING", (0, 0), (0, 0), 22),
+                ("RIGHTPADDING", (0, 0), (0, 0), 14),
+                ("LEFTPADDING", (1, 0), (1, 0), 8),
+                ("RIGHTPADDING", (1, 0), (1, 0), 16),
+                ("TOPPADDING", (0, 0), (-1, -1), 14),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LINEBELOW", (0, 0), (-1, -1), 4, ACCENT),
             ]
