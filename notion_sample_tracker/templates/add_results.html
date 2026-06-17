@@ -1251,6 +1251,19 @@ async function downloadReceiptPdf() {
   URL.revokeObjectURL(url);
 }
 
+function imageFileToReceiptPreview(file) {
+  return new Promise((resolve) => {
+    if (!file || !file.type.startsWith('image/')) {
+      resolve(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, data_url: reader.result });
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 async function validateResultBeforeUpload(form) {
   const response = await fetch('/api/validate-result', {
     method: 'POST',
@@ -1429,6 +1442,10 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
 
     messageDiv.style.display = 'block';
     if (r.ok && j.success) {
+      if (j.receipt && pendingFile && pendingFile.type.startsWith('image/')) {
+        const preview = await imageFileToReceiptPreview(pendingFile);
+        j.receipt.images = preview ? [preview] : [];
+      }
       showSubmissionSuccess(j.message || 'Data entry saved successfully', j.receipt, j.warning);
 
       // reset UI

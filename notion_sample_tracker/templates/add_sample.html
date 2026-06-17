@@ -1316,6 +1316,26 @@
             URL.revokeObjectURL(url);
         }
 
+        function imageFileToReceiptPreview(file) {
+            return new Promise((resolve) => {
+                if (!file || !file.type.startsWith('image/')) {
+                    resolve(null);
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => resolve({ name: file.name, data_url: reader.result });
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function receiptPreviewsFromPhotos() {
+            const previews = await Promise.all(
+                selectedPhotos.slice(0, 4).map(entry => imageFileToReceiptPreview(entry.file))
+            );
+            return previews.filter(Boolean);
+        }
+
         async function validateSampleBeforeUpload(formData) {
             const response = await fetch('/api/validate-sample', {
                 method: 'POST',
@@ -1375,6 +1395,9 @@
 
                 messageDiv.style.display = 'block';
                 if (response.ok && result.success) {
+                    if (result.receipt) {
+                        result.receipt.images = await receiptPreviewsFromPhotos();
+                    }
                     showSubmissionSuccess(result.message, result.receipt);
 
                     document.getElementById('sampleForm').reset();

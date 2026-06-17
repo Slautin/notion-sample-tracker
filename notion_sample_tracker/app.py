@@ -410,13 +410,14 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         data = request.get_json(force=True, silent=True) or {}
         title = str(data.get("title") or "Submission Receipt").strip()
         rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+        images = data.get("images") if isinstance(data.get("images"), list) else []
         clean_rows = []
         for item in rows:
             if isinstance(item, list) and len(item) >= 2:
                 clean_rows.append((str(item[0]), item[1]))
             elif isinstance(item, dict):
                 clean_rows.append((str(item.get("label", "")), item.get("value", "")))
-        pdf = make_receipt_pdf(title, clean_rows)
+        pdf = make_receipt_pdf(title, clean_rows, images=images)
         filename = f"{_safe_segment(title.lower())}.pdf"
         return send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True, download_name=filename)
 
