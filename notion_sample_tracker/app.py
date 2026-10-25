@@ -669,7 +669,7 @@ def _sample_duplicate_info(form: SampleForm, notion: NotionRepository) -> dict[s
         existing_submission = notion.sample_page_by_submission(form.submission_id)
         if existing_submission and existing_submission.get("id") == existing.get("id") and _sample_submission_matches_page(form, existing_submission):
             return None
-    return {"page": existing, "changes": _sample_field_changes(form, existing)}
+    return {"page": existing, "changes": _sample_field_changes(form, existing, lambda value: notion.resolve_sample_page_id(value))}
 
 
 def _duplicate_sample_response(duplicate: dict[str, Any]) -> dict[str, Any]:
@@ -687,7 +687,11 @@ def _duplicate_sample_response(duplicate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _sample_field_changes(form: SampleForm, page: dict[str, Any]) -> list[dict[str, Any]]:
+def _sample_field_changes(
+    form: SampleForm,
+    page: dict[str, Any],
+    resolve_parent: Callable[[str], str] | None = None,
+) -> list[dict[str, Any]]:
     comparisons = [
         ("Sample Type", form.sample_type, _page_select(page, "Sample Type"), "text"),
         ("Composition", form.composition, _page_text(page, "Composition"), "optional_text"),
@@ -698,7 +702,8 @@ def _sample_field_changes(form: SampleForm, page: dict[str, Any]) -> list[dict[s
         ("Status", form.status, _page_select(page, "Status"), "optional_text"),
     ]
     if _is_subsample(form.sample_type):
-        comparisons.insert(2, ("Parent Sample", form.parent_sample_id, _page_relation_id(page, "Parent Sample"), "optional_text"))
+        parent_id = _resolved_parent_id(form.parent_sample_id, resolve_parent)
+        comparisons.insert(2, ("Parent Sample", parent_id, _page_relation_id(page, "Parent Sample"), "page_id"))
     changes: list[dict[str, Any]] = []
     for field, new_value, old_value, mode in comparisons:
         changed = _values_differ(new_value, old_value, mode)
@@ -710,9 +715,27 @@ def _sample_field_changes(form: SampleForm, page: dict[str, Any]) -> list[dict[s
 def _values_differ(new_value: Any, old_value: Any, mode: str) -> bool:
     if mode == "set":
         return not _same_set(list(new_value or []), list(old_value or []))
-    if mode == "optional_text" and not str(new_value or "").strip():
+    if mode in {"optional_text", "page_id"} and not str(new_value or "").strip():
         return False
+    if mode == "page_id":
+        return _normalize_page_id(new_value) != _normalize_page_id(old_value)
     return not _same_text(str(new_value or ""), str(old_value or ""))
+
+
+def _normalize_page_id(value: Any) -> str:
+    return str(value or "").replace("-", "").strip().casefold()
+
+
+def _resolved_parent_id(value: str, resolve_parent: Callable[[str], str] | None) -> str:
+    """The form carries the parent's name (older forms send an ID) while Notion stores an ID, so compare IDs."""
+    value = (value or "").strip()
+    if not value or resolve_parent is None:
+        return value
+    try:
+        return resolve_parent(value) or value
+    except ValueError:
+        # Unknown parent: leave it as typed so it counts as a change; the amendment itself raises the clear error.
+        return value
 
 
 def _revision_id() -> str:

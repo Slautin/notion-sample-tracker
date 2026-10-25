@@ -57,7 +57,7 @@ class NotionRepository:
         return self.client.pages.update(page_id=page_id, properties=properties)
 
     def update_sample_fields(self, page_id: str, form: SampleForm, field_names: list[str]) -> dict[str, Any]:
-        properties = self._sample_amendment_properties(form, set(field_names))
+        properties = self._sample_amendment_properties(page_id, form, set(field_names))
         if not properties:
             return self.client.pages.retrieve(page_id=page_id)
         return self.client.pages.update(page_id=page_id, properties=properties)
@@ -72,6 +72,10 @@ class NotionRepository:
 
     def sample_page_by_name(self, name: str) -> dict[str, Any] | None:
         return self._find_by_any_title(self.samples_db, name)
+
+    def resolve_sample_page_id(self, value: str) -> str:
+        """Page ID for a sample given by name or ID. Raises ValueError if no such sample exists."""
+        return self._resolve_page_id(self.samples_db, value)
 
     def result_exists(self, name: str) -> bool:
         return self._find_by_any_title(self.results_db, name) is not None
@@ -202,6 +206,12 @@ class NotionRepository:
         property_name: str,
         files: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
+        """Add uploaded files to a files property without dropping what is already there.
+
+        Notion replaces the whole array on update, so the current files are read back right before the
+        update (hosted file URLs expire) and sent along. A new file replaces an existing one with the same
+        name, which keeps a retried submission from attaching its photos twice.
+        """
         if not files:
             return None
         uploaded_files = []
@@ -218,9 +228,11 @@ class NotionRepository:
                     "file_upload": {"id": file_id},
                 }
             )
+        new_names = {item["name"] for item in uploaded_files}
+        kept_files = [item for item in self._existing_files(page_id, property_name) if item["name"] not in new_names]
         return self.client.pages.update(
             page_id=page_id,
-            properties={property_name: {"files": uploaded_files}},
+            properties={property_name: {"files": kept_files + uploaded_files}},
         )
 
     def _sample_properties(self, form: SampleForm, parsed: ParsedFormula | None, source_relations: list[dict]) -> dict[str, Any]:
@@ -256,7 +268,7 @@ class NotionRepository:
             properties["Source"] = {"relation": source_relations}
         return properties
 
-    def _sample_amendment_properties(self, form: SampleForm, field_names: set[str]) -> dict[str, Any]:
+    def _sample_amendment_properties(self, page_id: str, form: SampleForm, field_names: set[str]) -> dict[str, Any]:
         properties: dict[str, Any] = {"Submission ID": self._rich_text(form.submission_id)}
         if "Sample Type" in field_names:
             properties["Sample Type"] = {"select": {"name": form.sample_type}} if form.sample_type else {"select": None}
@@ -266,7 +278,7 @@ class NotionRepository:
             properties["Elements"] = {"multi_select": [{"name": element} for element in parsed.elements]} if parsed else {"multi_select": []}
         if "Parent Sample" in field_names:
             parent_id = self._resolve_page_id(self.samples_db, form.parent_sample_id) if form.parent_sample_id else ""
-            if parent_id and parent_id == page_id:
+            if parent_id and self._same_page_id(parent_id, page_id):
                 raise ValueError("A sample cannot be amended to use itself as Parent Sample.")
             properties["Parent Sample"] = {"relation": [{"id": parent_id}]} if parent_id else {"relation": []}
         if "Synthesis" in field_names:
@@ -434,7 +446,18 @@ class NotionRepository:
                 kept.append({"name": item.get("name", "file"), "type": "external", "external": item["external"]})
             elif file_type == "file_upload":
                 kept.append({"name": item.get("name", "file"), "type": "file_upload", "file_upload": item["file_upload"]})
+            elif file_type == "file" and item.get("file", {}).get("url"):
+                # Notion returns files it hosts (including ones attached via the upload API) as type "file".
+                # They must be sent back as-is, otherwise a files update drops them.
+                hosted = {"url": item["file"]["url"]}
+                if item["file"].get("expiry_time"):
+                    hosted["expiry_time"] = item["file"]["expiry_time"]
+                kept.append({"name": item.get("name", "file"), "type": "file", "file": hosted})
         return kept
+
+    @staticmethod
+    def _same_page_id(left: str, right: str) -> bool:
+        return left.replace("-", "").lower() == right.replace("-", "").lower()
 
     def _upload_file_to_notion(self, name: str, content: bytes, content_type: str) -> str:
         headers = {
