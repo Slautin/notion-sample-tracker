@@ -15,7 +15,7 @@ from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, s
 from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
 from notion_sample_tracker.services.notion_client import NotionRepository
-from notion_sample_tracker.services.onedrive_client import OneDriveClient
+from notion_sample_tracker.services.onedrive_client import OneDriveClient, OneDriveConfigError
 from notion_sample_tracker.services.pdf_receipt import make_receipt_pdf
 from notion_sample_tracker.services.qrcode_service import make_qr_png_bytes
 from notion_sample_tracker.settings import Settings
@@ -23,6 +23,7 @@ from notion_sample_tracker.settings import Settings
 
 def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> Flask:
     settings = settings_factory()
+    settings.validate()
     app = Flask(__name__)
     app.config["SECRET_KEY"] = settings.app_secret_key
     app.config["MAX_CONTENT_LENGTH"] = settings.max_upload_mb * 1024 * 1024
@@ -47,7 +48,10 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         refresh_token=settings.onedrive_refresh_token,
         root_folder=settings.onedrive_root_folder,
         timeout=settings.onedrive_timeout_seconds,
+        allowed_host_suffixes=settings.onedrive_allowed_host_suffixes,
     )
+    if settings.is_production:
+        _verify_onedrive_at_startup(onedrive)
 
     @app.get("/")
     def index():
@@ -505,6 +509,18 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         return health()
 
     return app
+
+
+def _verify_onedrive_at_startup(onedrive: OneDriveClient) -> None:
+    """Refuse to start against a personal or otherwise disallowed drive; tolerate a temporary Graph outage."""
+    try:
+        info = onedrive.verify_drive()
+    except OneDriveConfigError:
+        raise
+    except Exception as exc:
+        app_log("onedrive_startup_check_deferred", error=str(exc))
+        return
+    app_log("onedrive_drive_verified", drive_type=info.drive_type, host=info.host)
 
 
 def _safe_list(loader: Callable[[], list[dict[str, str]]]) -> list[dict[str, str]]:

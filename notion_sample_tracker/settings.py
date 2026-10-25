@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from notion_sample_tracker.services.onedrive_client import BLOCKED_TENANT_ALIASES
 
 
 load_dotenv()
@@ -13,6 +16,7 @@ load_dotenv()
 DEFAULT_DEV_SECRET = "dev-only-change-me"
 LOCAL_ENVS = {"development", "dev", "local", "test", "testing"}
 PRODUCTION_ENVS = {"production", "prod"}
+TENANT_GUID = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 DEFAULT_UPLOAD_EXTENSIONS = (
     ".csv",
     ".doc",
@@ -70,6 +74,11 @@ def _extensions(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+def _csv(name: str) -> tuple[str, ...]:
+    values = [item.strip().lower() for item in _optional(name).split(",") if item.strip()]
+    return tuple(dict.fromkeys(values))
+
+
 def _backlog_dir(app_env: str) -> Path:
     raw = _optional("BACKLOG_DIR", "/data/backlog" if app_env in PRODUCTION_ENVS else "./backlog")
     path = Path(raw)
@@ -106,6 +115,7 @@ class Settings:
     max_upload_files: int = 12
     max_upload_file_mb: int = 25
     allowed_upload_extensions: tuple[str, ...] = DEFAULT_UPLOAD_EXTENSIONS
+    onedrive_allowed_host_suffixes: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -130,6 +140,7 @@ class Settings:
             onedrive_refresh_token=_optional("ONEDRIVE_REFRESH_TOKEN"),
             onedrive_root_folder=_optional("ONEDRIVE_ROOT_FOLDER", "SampleTracker"),
             onedrive_timeout_seconds=_int("ONEDRIVE_TIMEOUT_SECONDS", 20),
+            onedrive_allowed_host_suffixes=_csv("ONEDRIVE_ALLOWED_HOST_SUFFIXES"),
             backlog_dir=_backlog_dir(app_env),
             max_upload_mb=_int("MAX_UPLOAD_MB", 200),
             app_env=app_env,
@@ -171,8 +182,19 @@ class Settings:
             raise RuntimeError("ALLOWED_UPLOAD_EXTENSIONS must contain at least one extension.")
         if self.onedrive_auth_mode not in {"client_credentials", "delegated_refresh"}:
             raise RuntimeError("ONEDRIVE_AUTH_MODE must be client_credentials or delegated_refresh.")
-        if self.onedrive_auth_mode == "client_credentials" and not self.onedrive_drive_id:
-            raise RuntimeError("ONEDRIVE_DRIVE_ID is required when ONEDRIVE_AUTH_MODE=client_credentials.")
+        if self.onedrive_tenant_id.strip().lower() in BLOCKED_TENANT_ALIASES:
+            raise RuntimeError(
+                "ONEDRIVE_TENANT_ID must be your organization's tenant ID; common, consumers and organizations are not allowed."
+            )
+        if self.is_production and not TENANT_GUID.match(self.onedrive_tenant_id.strip()):
+            raise RuntimeError("ONEDRIVE_TENANT_ID must be the organization's tenant GUID in production.")
+        if self.is_production and self.onedrive_auth_mode == "delegated_refresh":
+            raise RuntimeError(
+                "ONEDRIVE_AUTH_MODE=delegated_refresh is not allowed in production; "
+                "use client_credentials with the organization's SharePoint drive."
+            )
+        if not self.onedrive_drive_id:
+            raise RuntimeError("ONEDRIVE_DRIVE_ID is required. The app never falls back to /me/drive (a personal drive).")
         if self.onedrive_auth_mode == "delegated_refresh" and not self.onedrive_refresh_token:
             raise RuntimeError("ONEDRIVE_REFRESH_TOKEN is required when ONEDRIVE_AUTH_MODE=delegated_refresh.")
         if self.onedrive_timeout_seconds <= 0:

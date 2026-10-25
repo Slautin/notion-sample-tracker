@@ -114,10 +114,29 @@ The services intentionally keep property names centralized in `settings.py`, so 
 
 Set `NOTION_HOME_URL` in production if `/` should redirect to your main Notion page. The older `NOTION_PAGE` variable name is also supported. Put links on that Notion page to `/samples/new` and `/results/new` on the deployed app domain.
 
-Set `ONEDRIVE_DRIVE_ID` in production. The app uses Microsoft Graph client-credentials auth, so uploads target `/drives/{ONEDRIVE_DRIVE_ID}` rather than `/me/drive`.
+## OneDrive (UTK only)
+
+Files are archived to the organization's (UTK) SharePoint or OneDrive for Business drive, never a personal OneDrive:
+
+- `ONEDRIVE_TENANT_ID` must be the UTK tenant ID. `common`, `consumers` and `organizations` are rejected, and production requires the GUID.
+- `ONEDRIVE_DRIVE_ID` is always required. Uploads go to `/drives/{ONEDRIVE_DRIVE_ID}`; there is no `/me/drive` fallback.
+- `ONEDRIVE_AUTH_MODE=client_credentials` (app-only) is the only mode allowed in production. `delegated_refresh` is for local development and is rejected when `APP_ENV=production`.
+- Before the first upload the app asks Graph about the drive and refuses to write if it is a `personal` drive or on a personal OneDrive host. Optionally set `ONEDRIVE_ALLOWED_HOST_SUFFIXES` (comma-separated, e.g. `yourtenant.sharepoint.com,yourtenant-my.sharepoint.com`) to pin the drive to your tenant's SharePoint hosts.
+- In production the same check also runs at startup. A definite violation stops the app; a temporary Graph outage is logged and the check repeats before the first upload.
+- If Graph will not let the app read the drive object itself (HTTP 403, which can happen with `Sites.Selected`), the check falls back to the drive's root folder and judges by host only. Set `ONEDRIVE_ALLOWED_HOST_SUFFIXES` to make that strict.
+- Access tokens are cached until shortly before they expire.
+
+Recommended setup: register a single-tenant app in UTK's Entra ID, grant Microsoft Graph application permission `Sites.Selected` with admin consent, have an admin grant the app `write` on the lab's SharePoint site, then set `ONEDRIVE_DRIVE_ID` to that site's document library (`GET /sites/{host}:/sites/{name}:/drives`).
+
+Test the connection on its own, without Notion, before using the app. It signs in, verifies the drive, writes a small file under `<ROOT>/_connection_check/` and opens and cancels a test upload session. Add `--read-only` to write nothing:
+
+```bash
+python -m notion_sample_tracker.onedrive_check
+```
 
 Set `APP_ENV=production` in production. Production mode requires a non-default
-`APP_SECRET_KEY`, a non-local `PUBLIC_BASE_URL`, and a valid OneDrive drive ID. Keep
+`APP_SECRET_KEY`, a non-local `PUBLIC_BASE_URL`, a UTK tenant GUID, `client_credentials`
+auth, and an `ONEDRIVE_DRIVE_ID`. Keep
 `ENABLE_BACKLOG_VIEW=false` unless the app is behind a separate trusted access control.
 
 ## Stability Notes
