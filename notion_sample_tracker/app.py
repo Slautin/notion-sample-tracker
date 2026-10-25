@@ -10,15 +10,28 @@ from typing import Any, Callable
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 
+from notion_sample_tracker.access import install_access_control
 from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, ResultForm, SampleForm
 from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, safe_path_segment, safe_upload_filename
 from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
+from notion_sample_tracker.services.local_storage import (
+    LocalStorage,
+    OffsetMismatch,
+    ResumableUploads,
+    StorageFull,
+    UploadIncomplete,
+    UploadNotFound,
+)
 from notion_sample_tracker.services.notion_client import NotionRepository
 from notion_sample_tracker.services.onedrive_client import OneDriveClient, OneDriveConfigError
 from notion_sample_tracker.services.pdf_receipt import make_receipt_pdf
 from notion_sample_tracker.services.qrcode_service import make_qr_png_bytes
+from notion_sample_tracker.services.storage import Storage
 from notion_sample_tracker.settings import Settings
+
+
+MB = 1024 * 1024
 
 
 def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> Flask:
@@ -28,6 +41,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     app.config["SECRET_KEY"] = settings.app_secret_key
     app.config["MAX_CONTENT_LENGTH"] = settings.max_upload_mb * 1024 * 1024
     app.config["SAMPLE_TRACKER_SETTINGS"] = settings
+    install_access_control(app, settings)
 
     formula_parser = FormulaParser()
     backlog = JsonlBacklog(settings.backlog_dir)
@@ -38,20 +52,46 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         people_db=settings.notion_people_database_id,
         formula_parser=formula_parser,
     )
-    onedrive = OneDriveClient(
-        tenant_id=settings.onedrive_tenant_id,
-        client_id=settings.onedrive_client_id,
-        client_secret=settings.onedrive_client_secret,
-        auth_mode=settings.onedrive_auth_mode,
-        public_client=settings.onedrive_public_client,
-        drive_id=settings.onedrive_drive_id,
-        refresh_token=settings.onedrive_refresh_token,
-        root_folder=settings.onedrive_root_folder,
-        timeout=settings.onedrive_timeout_seconds,
-        allowed_host_suffixes=settings.onedrive_allowed_host_suffixes,
-    )
-    if settings.is_production:
-        _verify_onedrive_at_startup(onedrive)
+    local_storage: LocalStorage | None = None
+    uploads: ResumableUploads | None = None
+    storage: Storage
+    if settings.storage_backend == "local":
+        local_storage = LocalStorage(
+            settings.storage_root,
+            settings.public_base_url,
+            min_free_bytes=settings.storage_min_free_mb * MB,
+        )
+        local_storage.check_writable()
+        uploads = ResumableUploads(
+            local_storage,
+            max_file_bytes=settings.max_result_file_mb * MB,
+            chunk_bytes=settings.upload_chunk_mb * MB,
+            ttl_seconds=settings.upload_ttl_hours * 3600,
+        )
+        storage = local_storage
+    else:
+        storage = OneDriveClient(
+            tenant_id=settings.onedrive_tenant_id,
+            client_id=settings.onedrive_client_id,
+            client_secret=settings.onedrive_client_secret,
+            auth_mode=settings.onedrive_auth_mode,
+            public_client=settings.onedrive_public_client,
+            drive_id=settings.onedrive_drive_id,
+            refresh_token=settings.onedrive_refresh_token,
+            root_folder=settings.onedrive_root_folder,
+            timeout=settings.onedrive_timeout_seconds,
+            allowed_host_suffixes=settings.onedrive_allowed_host_suffixes,
+        )
+        if settings.is_production:
+            _verify_onedrive_at_startup(storage)
+    storage_label = settings.storage_label
+    stored_file_check: Callable[[str], bool] | None = None
+    if local_storage is not None:
+        stored_file_check = lambda url: local_storage.path_for_url(url) is not None
+
+    @app.context_processor
+    def inject_storage():
+        return {"storage_backend": settings.storage_backend, "storage_label": storage_label}
 
     @app.get("/")
     def index():
@@ -82,7 +122,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             _validate_sample_form(form, notion)
             page = notion.create_sample(form)
             snapshot_path = f"samples/{page['id']}/record.json"
-            onedrive_result = onedrive.upload_json(snapshot_path, {"form": form.to_dict(), "notion": page})
+            onedrive_result = storage.upload_json(snapshot_path, {"form": form.to_dict(), "notion": page})
             notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
@@ -94,7 +134,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     status="complete",
                 )
             )
-            flash("Sample created in Notion and archived to OneDrive.", "success")
+            flash(f"Sample created in Notion and archived to {storage_label}.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
             if page:
@@ -113,7 +153,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         backlog.append(BacklogEvent(action="update", entity="sample", payload=form.to_dict(), notion_page_id=page_id))
         try:
             page = notion.update_sample(page_id, form)
-            onedrive_result = onedrive.upload_json(f"samples/{page_id}/record.json", {"form": form.to_dict(), "notion": page})
+            onedrive_result = storage.upload_json(f"samples/{page_id}/record.json", {"form": form.to_dict(), "notion": page})
             notion.update_archive_status(page_id, ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
@@ -125,7 +165,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     status="complete",
                 )
             )
-            flash("Sample revised in Notion and archived to OneDrive.", "success")
+            flash(f"Sample revised in Notion and archived to {storage_label}.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
             _safe_archive_status(notion, page_id, ARCHIVE_FAILED, str(exc))
@@ -145,9 +185,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         page: dict[str, Any] | None = None
         try:
             _validate_result_raw(_form_payload(request.form), notion, preflight=True)
-            uploaded_paths = _archive_uploads(onedrive, "results/pending", request.files.getlist("files"), settings)
+            uploaded_paths = _archive_uploads(storage, "results/pending", request.files.getlist("files"), settings)
             page = notion.create_result(form)
-            snapshot = onedrive.upload_json(f"results/{page['id']}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
+            snapshot = storage.upload_json(f"results/{page['id']}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
             notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
@@ -159,7 +199,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     status="complete",
                 )
             )
-            flash("Data entry created in Notion and archived to OneDrive.", "success")
+            flash(f"Data entry created in Notion and archived to {storage_label}.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
             if page:
@@ -184,9 +224,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         form = ResultForm.from_form(request.form)
         backlog.append(BacklogEvent(action="update", entity="result", payload=form.to_dict(), notion_page_id=page_id))
         try:
-            uploaded_paths = _archive_uploads(onedrive, f"results/{page_id}/files", request.files.getlist("files"), settings)
+            uploaded_paths = _archive_uploads(storage, f"results/{page_id}/files", request.files.getlist("files"), settings)
             page = notion.update_result(page_id, form)
-            snapshot = onedrive.upload_json(f"results/{page_id}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
+            snapshot = storage.upload_json(f"results/{page_id}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
             notion.update_archive_status(page_id, ARCHIVE_COMPLETE)
             backlog.append(
                 BacklogEvent(
@@ -198,7 +238,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     status="complete",
                 )
             )
-            flash("Data entry revised in Notion and archived to OneDrive.", "success")
+            flash(f"Data entry revised in Notion and archived to {storage_label}.", "success")
             return redirect(url_for("index"))
         except Exception as exc:
             _safe_archive_status(notion, page_id, ARCHIVE_FAILED, str(exc))
@@ -269,7 +309,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     return jsonify(_duplicate_sample_response(duplicate)), 409
                 if existing_sample_id != duplicate["page"]["id"]:
                     raise ValueError("Duplicate sample confirmation did not match the existing Notion record.")
-                return _submit_sample_amendment(form, duplicate, notion, onedrive, backlog, settings)
+                return _submit_sample_amendment(form, duplicate, notion, storage, backlog, settings)
             page = notion.sample_page_by_submission(form.submission_id)
             if page and notion.archive_status_from_page(page) == ARCHIVE_COMPLETE:
                 return jsonify(
@@ -288,15 +328,15 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                 page = notion.create_sample(form)
                 app_log("notion_sample_created", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
             sample_folder = notion.sample_storage_info_from_page(page)["folder"]
-            uploaded_files, photo_errors = _archive_sample_photos(notion, onedrive, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"), settings)
+            uploaded_files, photo_errors = _archive_sample_photos(notion, storage, page["id"], f"{sample_folder}/photos", request.files.getlist("photos"), settings)
             qr_name = f"{_safe_segment(form.name)}_qr.png"
             qr_bytes = make_qr_png_bytes(page["url"])
             started = time.perf_counter()
-            qr_upload = onedrive.upload_bytes(f"{sample_folder}/{qr_name}", qr_bytes, "image/png")
+            qr_upload = storage.upload_bytes(f"{sample_folder}/{qr_name}", qr_bytes, "image/png")
             notion.set_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
             app_log("sample_qr_uploaded", seconds=round(time.perf_counter() - started, 3))
             started = time.perf_counter()
-            snapshot = onedrive.upload_json(
+            snapshot = storage.upload_json(
                 f"{sample_folder}/record.json",
                 {
                     "form": form.to_dict(),
@@ -345,7 +385,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         artifact_errors: list[str] = []
         onedrive_paths: list[str] = []
         try:
-            _validate_result_raw(raw_form, notion, preflight=False)
+            _validate_result_raw(raw_form, notion, preflight=False, stored_file_check=stored_file_check)
             form = ResultForm.from_form(request.form)
         except Exception as exc:
             app_log("result_submission_failed", stage="form_parse", error=str(exc), form=raw_form)
@@ -383,7 +423,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         try:
             qr_bytes = make_qr_png_bytes(page["url"])
             started = time.perf_counter()
-            qr_upload = onedrive.upload_bytes(f"{result_folder}/{qr_name}", qr_bytes, "image/png")
+            qr_upload = storage.upload_bytes(f"{result_folder}/{qr_name}", qr_bytes, "image/png")
             qr_path = qr_upload.path
             onedrive_paths.append(qr_upload.path)
             notion.set_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
@@ -395,7 +435,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
         try:
             started = time.perf_counter()
-            snapshot = onedrive.upload_json(
+            snapshot = storage.upload_json(
                 f"{result_folder}/record.json",
                 {"form": form.to_dict(), "raw_form": raw_form, "notion": page, "qr": qr_path},
             )
@@ -453,6 +493,8 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
     @app.post("/api/create-upload-session")
     def api_create_upload_session():
+        if uploads is not None:
+            return jsonify({"success": False, "error": "Files are stored on this server; use /api/uploads."}), 404
         try:
             data = request.get_json(force=True)
             filename = safe_upload_filename(data.get("filename", ""))
@@ -467,10 +509,90 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             if size and size > settings.max_upload_file_mb * 1024 * 1024:
                 return jsonify({"success": False, "error": f"File exceeds {settings.max_upload_file_mb} MB limit."}), 400
             parent_folder = _result_upload_parent_folder(notion, parent_sample, parent_dataset)
-            session = onedrive.create_upload_session(f"{parent_folder}/results/{entry_name}/{filename}")
+            session = storage.create_upload_session(f"{parent_folder}/results/{entry_name}/{filename}")
             return jsonify({"success": True, **session})
         except Exception as exc:
             return jsonify({"success": False, "error": str(exc)}), 500
+
+    if uploads is not None and local_storage is not None:
+
+        def upload_error(message: str, status: int, **extra: Any):
+            return jsonify({"success": False, "error": message, **extra}), status
+
+        @app.post("/api/uploads")
+        def api_upload_start():
+            data = request.get_json(force=True, silent=True)
+            if not isinstance(data, dict):
+                return upload_error("A JSON object is required.", 400)
+            try:
+                raw_name = str(data.get("filename") or "").strip()
+                if not raw_name:
+                    raise ValueError("filename is required.")
+                filename = safe_upload_filename(raw_name)
+                if not is_allowed_extension(filename, settings.allowed_upload_extensions):
+                    raise ValueError(f"File type is not allowed: {Path(filename).suffix.lower() or '(none)'}")
+                entry_name = _safe_segment(data.get("entry_name", "data_entry"))
+                parent_folder = _result_upload_parent_folder(
+                    notion, str(data.get("parent_sample") or ""), str(data.get("parent_dataset") or "")
+                )
+                info = uploads.create(filename, data.get("size"), f"{parent_folder}/results/{entry_name}")
+            except StorageFull as exc:
+                return upload_error(str(exc), 507)
+            except ValueError as exc:
+                return upload_error(str(exc), 400)
+            except Exception as exc:
+                app_log("upload_start_failed", error=str(exc))
+                return upload_error("Could not start the upload. Please try again.", 500)
+            return jsonify({"success": True, "chunk_size": uploads.chunk_bytes, **info})
+
+        @app.get("/api/uploads/<upload_id>")
+        def api_upload_status(upload_id: str):
+            try:
+                return jsonify({"success": True, "chunk_size": uploads.chunk_bytes, **uploads.status(upload_id)})
+            except UploadNotFound:
+                return upload_error("Upload not found or expired. Please submit again.", 404)
+
+        @app.put("/api/uploads/<upload_id>")
+        def api_upload_chunk(upload_id: str):
+            try:
+                offset = int(request.headers.get("Upload-Offset", ""))
+            except ValueError:
+                return upload_error("The Upload-Offset header (a whole number of bytes) is required.", 400)
+            if request.content_length is None:
+                return upload_error("Content-Length is required.", 411)
+            try:
+                info = uploads.append(upload_id, offset, request.stream, request.content_length)
+            except UploadNotFound:
+                return upload_error("Upload not found or expired. Please submit again.", 404)
+            except OffsetMismatch as exc:
+                return upload_error(str(exc), 409, received=exc.received)
+            except StorageFull as exc:
+                return upload_error(str(exc), 507)
+            except ValueError as exc:
+                return upload_error(str(exc), 400)
+            return jsonify({"success": True, **info})
+
+        @app.post("/api/uploads/<upload_id>/complete")
+        def api_upload_complete(upload_id: str):
+            try:
+                info = uploads.complete(upload_id)
+            except UploadNotFound:
+                return upload_error("Upload not found or expired. Please submit again.", 404)
+            except UploadIncomplete as exc:
+                return upload_error(str(exc), 409, received=exc.received, size=exc.size)
+            return jsonify({"success": True, **info})
+
+        @app.get("/files/<path:relative_path>")
+        def download_file(relative_path: str):
+            try:
+                path = local_storage.open_for_download(relative_path)
+            except FileNotFoundError:
+                abort(404)
+            response = send_file(path, as_attachment=True, download_name=path.name, conditional=True)
+            response.headers["Cache-Control"] = "private, no-cache"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+            return response
 
     @app.post("/api/save-json")
     def api_save_json():
@@ -499,6 +621,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         notion_home_url = _notion_home_url(settings)
         return {
             "status": "ok",
+            "storage_backend": settings.storage_backend,
             "notion_home_configured": bool(notion_home_url),
             "notion_home_url_host": _url_host(notion_home_url),
             "public_base_url": settings.public_base_url,
@@ -511,10 +634,10 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     return app
 
 
-def _verify_onedrive_at_startup(onedrive: OneDriveClient) -> None:
+def _verify_onedrive_at_startup(storage: OneDriveClient) -> None:
     """Refuse to start against a personal or otherwise disallowed drive; tolerate a temporary Graph outage."""
     try:
-        info = onedrive.verify_drive()
+        info = storage.verify_drive()
     except OneDriveConfigError:
         raise
     except Exception as exc:
@@ -530,19 +653,19 @@ def _safe_list(loader: Callable[[], list[dict[str, str]]]) -> list[dict[str, str
         return []
 
 
-def _archive_uploads(onedrive: OneDriveClient, prefix: str, files, settings: Settings) -> list[dict[str, str]]:
+def _archive_uploads(storage: Storage, prefix: str, files, settings: Settings) -> list[dict[str, str]]:
     files = _validate_uploads(files, settings)
     uploaded: list[dict[str, str]] = []
     for file_storage in files:
         safe_name = safe_upload_filename(file_storage.filename)
-        result = onedrive.upload_file(f"{prefix}/{safe_name}", file_storage.stream, file_storage.mimetype)
+        result = storage.upload_file(f"{prefix}/{safe_name}", file_storage.stream, file_storage.mimetype)
         uploaded.append({"name": safe_name, "path": result.path, "url": result.web_url})
     return uploaded
 
 
 def _archive_sample_photos(
     notion: NotionRepository,
-    onedrive: OneDriveClient,
+    storage: Storage,
     page_id: str,
     prefix: str,
     files,
@@ -558,7 +681,7 @@ def _archive_sample_photos(
         content = file_storage.read()
         content_type = file_storage.mimetype or "application/octet-stream"
         try:
-            result = onedrive.upload_bytes(f"{prefix}/{safe_name}", content, content_type)
+            result = storage.upload_bytes(f"{prefix}/{safe_name}", content, content_type)
         except Exception as exc:
             message = f"photo_upload:{safe_name}: {exc}"
             errors.append(message)
@@ -581,7 +704,7 @@ def _submit_sample_amendment(
     form: SampleForm,
     duplicate: dict[str, Any],
     notion: NotionRepository,
-    onedrive: OneDriveClient,
+    storage: Storage,
     backlog: JsonlBacklog,
     settings: Settings,
 ):
@@ -605,7 +728,7 @@ def _submit_sample_amendment(
     updated_page = notion.update_sample_fields(page["id"], form, changed_fields)
     uploaded_files, photo_errors = _archive_sample_photos(
         notion,
-        onedrive,
+        storage,
         page["id"],
         f"{revision_prefix}/photos",
         request.files.getlist("photos"),
@@ -622,10 +745,10 @@ def _submit_sample_amendment(
         "new_files": uploaded_files,
         "photo_errors": photo_errors,
     }
-    revision_record = onedrive.upload_json(f"{revision_prefix}/record.json", revision_payload)
-    changed_record = onedrive.upload_json(f"{revision_prefix}/changed_fields.json", {"revision_id": revision_id, "changed_fields": changes})
-    files_record = onedrive.upload_json(f"{revision_prefix}/new_files.json", {"revision_id": revision_id, "files": uploaded_files})
-    current_record = onedrive.upload_json(f"{sample_folder}/current/record.json", revision_payload)
+    revision_record = storage.upload_json(f"{revision_prefix}/record.json", revision_payload)
+    changed_record = storage.upload_json(f"{revision_prefix}/changed_fields.json", {"revision_id": revision_id, "changed_fields": changes})
+    files_record = storage.upload_json(f"{revision_prefix}/new_files.json", {"revision_id": revision_id, "files": uploaded_files})
+    current_record = storage.upload_json(f"{sample_folder}/current/record.json", revision_payload)
 
     if photo_errors:
         _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, "; ".join(photo_errors))
@@ -837,7 +960,12 @@ def _page_relation_id(page: dict[str, Any], property_name: str) -> str:
     return relation[0].get("id", "") if relation else ""
 
 
-def _validate_result_raw(raw_form: dict[str, Any], notion: NotionRepository, preflight: bool) -> None:
+def _validate_result_raw(
+    raw_form: dict[str, Any],
+    notion: NotionRepository,
+    preflight: bool,
+    stored_file_check: Callable[[str], bool] | None = None,
+) -> None:
     name = str(raw_form.get("name") or "").strip()
     entry_type = str(raw_form.get("entry_type") or "").strip()
     parent_entry = str(raw_form.get("parent_entry") or "").strip()
@@ -862,8 +990,11 @@ def _validate_result_raw(raw_form: dict[str, Any], notion: NotionRepository, pre
         errors.append("Data upload method is required.")
     elif upload_method == "link" and not data_link:
         errors.append("Link is required when Data is Link.")
-    elif upload_method == "file" and not preflight and not onedrive_path:
-        errors.append("OneDrive file link is missing. Please upload the file before submitting.")
+    elif upload_method == "file" and not preflight:
+        if not onedrive_path:
+            errors.append("The uploaded file's link is missing. Please upload the file before submitting.")
+        elif stored_file_check is not None and not stored_file_check(onedrive_path):
+            errors.append("The uploaded file was not found on the server. Please upload it again.")
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
     submission_id = str(raw_form.get("submission_id") or raw_form.get("submissionId") or "").strip()

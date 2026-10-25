@@ -29,6 +29,7 @@ where = ["."]
 include = ["notion_sample_tracker*"]
 
 [tool.setuptools.package-data]
+"notion_sample_tracker" = ["templates/*.html", "static/*.css"]
 "notion_sample_tracker.periodictable" = ["*.json"]
 
 [tool.pytest.ini_options]

@@ -147,7 +147,11 @@ class ResultForm:
                 )
             ]
         upload_method = (form.get("upload_method") or form.get("data_type", "")).strip()
-        link = (form.get("link") or form.get("data_link") or form.get("onedrive_path") or "").strip()
+        if upload_method == "file":
+            # The stored file's address wins over a link that was typed earlier and then switched away from.
+            link = (form.get("onedrive_path") or form.get("link") or form.get("data_link") or "").strip()
+        else:
+            link = (form.get("link") or form.get("data_link") or form.get("onedrive_path") or "").strip()
         related_result_id = (form.get("related_result_id") or form.get("parent_dataset") or "").strip()
         sample_id = (form.get("sample_id") or form.get("parent_sample") or "").strip()
         return cls(

@@ -6,3 +6,6 @@ __pycache__/
 backlog/*.jsonl
 uploads/
 /ms_graph_api_token.json
+
+# Local file storage (STORAGE_BACKEND=local)
+/files/

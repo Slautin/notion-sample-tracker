@@ -16,6 +16,7 @@ load_dotenv()
 DEFAULT_DEV_SECRET = "dev-only-change-me"
 LOCAL_ENVS = {"development", "dev", "local", "test", "testing"}
 PRODUCTION_ENVS = {"production", "prod"}
+STORAGE_BACKENDS = {"onedrive", "local"}
 TENANT_GUID = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 DEFAULT_UPLOAD_EXTENSIONS = (
     ".csv",
@@ -89,6 +90,10 @@ def _backlog_dir(app_env: str) -> Path:
     return path
 
 
+def _storage_root(app_env: str) -> Path:
+    return Path(_optional("STORAGE_ROOT", "/data/files" if app_env in PRODUCTION_ENVS else "./files"))
+
+
 @dataclass(frozen=True)
 class Settings:
     app_secret_key: str
@@ -116,6 +121,15 @@ class Settings:
     max_upload_file_mb: int = 25
     allowed_upload_extensions: tuple[str, ...] = DEFAULT_UPLOAD_EXTENSIONS
     onedrive_allowed_host_suffixes: tuple[str, ...] = ()
+    storage_backend: str = "onedrive"
+    storage_root: Path = Path("./files")
+    storage_min_free_mb: int = 1024
+    max_result_file_mb: int = 2048
+    upload_chunk_mb: int = 8
+    upload_ttl_hours: int = 24
+    access_password: str = ""
+    access_username: str = "lab"
+    access_behind_auth_proxy: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -123,6 +137,15 @@ class Settings:
         app_secret_key = _optional("APP_SECRET_KEY")
         if not app_secret_key and app_env in LOCAL_ENVS:
             app_secret_key = DEFAULT_DEV_SECRET
+        storage_backend = _optional("STORAGE_BACKEND", "onedrive").lower()
+        if storage_backend not in STORAGE_BACKENDS:
+            # Checked before anything else so a typo is reported as a typo, not as missing OneDrive settings.
+            raise RuntimeError("STORAGE_BACKEND must be onedrive or local.")
+
+        def onedrive_setting(name: str) -> str:
+            # The OneDrive variables are only mandatory when OneDrive is the storage backend.
+            return _optional(name) if storage_backend == "local" else _required(name)
+
         settings = cls(
             app_secret_key=app_secret_key,
             public_base_url=_optional("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"),
@@ -131,9 +154,9 @@ class Settings:
             notion_samples_database_id=_required("NOTION_SAMPLES_DATABASE_ID"),
             notion_results_database_id=_required("NOTION_RESULTS_DATABASE_ID"),
             notion_people_database_id=_required("NOTION_PEOPLE_DATABASE_ID"),
-            onedrive_tenant_id=_required("ONEDRIVE_TENANT_ID"),
-            onedrive_client_id=_required("ONEDRIVE_CLIENT_ID"),
-            onedrive_client_secret=_required("ONEDRIVE_CLIENT_SECRET"),
+            onedrive_tenant_id=onedrive_setting("ONEDRIVE_TENANT_ID"),
+            onedrive_client_id=onedrive_setting("ONEDRIVE_CLIENT_ID"),
+            onedrive_client_secret=onedrive_setting("ONEDRIVE_CLIENT_SECRET"),
             onedrive_auth_mode=_optional("ONEDRIVE_AUTH_MODE", "client_credentials"),
             onedrive_public_client=_optional("ONEDRIVE_PUBLIC_CLIENT", "false").lower() in {"1", "true", "yes"},
             onedrive_drive_id=_optional("ONEDRIVE_DRIVE_ID"),
@@ -149,6 +172,15 @@ class Settings:
             max_upload_files=_int("MAX_UPLOAD_FILES", 12),
             max_upload_file_mb=_int("MAX_UPLOAD_FILE_MB", 25),
             allowed_upload_extensions=_extensions("ALLOWED_UPLOAD_EXTENSIONS", DEFAULT_UPLOAD_EXTENSIONS),
+            storage_backend=storage_backend,
+            storage_root=_storage_root(app_env),
+            storage_min_free_mb=_int("STORAGE_MIN_FREE_MB", 1024),
+            max_result_file_mb=_int("MAX_RESULT_FILE_MB", 2048),
+            upload_chunk_mb=_int("UPLOAD_CHUNK_MB", 8),
+            upload_ttl_hours=_int("UPLOAD_TTL_HOURS", 24),
+            access_password=_optional("ACCESS_PASSWORD"),
+            access_username=_optional("ACCESS_USERNAME", "lab"),
+            access_behind_auth_proxy=_bool("ACCESS_BEHIND_AUTH_PROXY", False),
         )
         settings.validate()
         return settings
@@ -156,6 +188,10 @@ class Settings:
     @property
     def is_production(self) -> bool:
         return self.app_env in PRODUCTION_ENVS
+
+    @property
+    def storage_label(self) -> str:
+        return "server storage" if self.storage_backend == "local" else "OneDrive"
 
     def validate(self) -> None:
         if not self.app_secret_key:
@@ -180,6 +216,47 @@ class Settings:
             raise RuntimeError("BACKLOG_READ_LIMIT must be greater than zero.")
         if not self.allowed_upload_extensions:
             raise RuntimeError("ALLOWED_UPLOAD_EXTENSIONS must contain at least one extension.")
+        if self.storage_backend not in STORAGE_BACKENDS:
+            raise RuntimeError("STORAGE_BACKEND must be onedrive or local.")
+        self._validate_access()
+        if self.storage_backend == "local":
+            self._validate_local_storage()
+        else:
+            self._validate_onedrive()
+
+    def _validate_access(self) -> None:
+        if not self.access_password:
+            return
+        if not self.access_username or ":" in self.access_username:
+            raise RuntimeError("ACCESS_USERNAME must not be empty or contain a colon.")
+        if self.is_production and len(self.access_password) < 12:
+            raise RuntimeError("ACCESS_PASSWORD must be at least 12 characters in production.")
+        if self.is_production and not self.public_base_url.startswith("https://"):
+            raise RuntimeError(
+                "PUBLIC_BASE_URL must use https when ACCESS_PASSWORD is set in production "
+                "(HTTP Basic sends the password with every request)."
+            )
+
+    def _validate_local_storage(self) -> None:
+        if self.max_result_file_mb <= 0:
+            raise RuntimeError("MAX_RESULT_FILE_MB must be greater than zero.")
+        if self.upload_chunk_mb <= 0:
+            raise RuntimeError("UPLOAD_CHUNK_MB must be greater than zero.")
+        if self.upload_chunk_mb > self.max_upload_mb:
+            raise RuntimeError("UPLOAD_CHUNK_MB must be less than or equal to MAX_UPLOAD_MB.")
+        if self.storage_min_free_mb < 0:
+            raise RuntimeError("STORAGE_MIN_FREE_MB must not be negative.")
+        if self.upload_ttl_hours <= 0:
+            raise RuntimeError("UPLOAD_TTL_HOURS must be greater than zero.")
+        if self.is_production and not self.storage_root.is_absolute():
+            raise RuntimeError("STORAGE_ROOT must be an absolute path in production, outside the application directory.")
+        if self.is_production and not (self.access_password or self.access_behind_auth_proxy):
+            raise RuntimeError(
+                "This app serves the stored files itself, so production needs access control: set ACCESS_PASSWORD, "
+                "or ACCESS_BEHIND_AUTH_PROXY=true if a login in front of the app protects every path including /files/."
+            )
+
+    def _validate_onedrive(self) -> None:
         if self.onedrive_auth_mode not in {"client_credentials", "delegated_refresh"}:
             raise RuntimeError("ONEDRIVE_AUTH_MODE must be client_credentials or delegated_refresh.")
         if self.onedrive_tenant_id.strip().lower() in BLOCKED_TENANT_ALIASES:

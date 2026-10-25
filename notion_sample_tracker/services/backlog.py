@@ -17,7 +17,12 @@ except ImportError:  # pragma: no cover - Windows fallback
 class JsonlBacklog:
     def __init__(self, directory: Path):
         self.directory = directory
-        self.directory.mkdir(parents=True, exist_ok=True)
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError(_not_writable_message(directory, exc)) from exc
+        if not os.access(self.directory, os.W_OK | os.X_OK):
+            raise RuntimeError(_not_writable_message(directory, "permission denied"))
         self._lock = Lock()
 
     def append(self, event: BacklogEvent) -> Path:
@@ -48,6 +53,13 @@ class JsonlBacklog:
             except json.JSONDecodeError:
                 continue
         return events
+
+
+def _not_writable_message(directory: Path, reason: object) -> str:
+    return (
+        f"Backlog directory {directory} is not writable ({reason}). Check BACKLOG_DIR and its permissions; "
+        "on Railway, mount the volume there and set RAILWAY_RUN_UID=0."
+    )
 
 
 def _lock_file(handle) -> None:

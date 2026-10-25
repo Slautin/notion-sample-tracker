@@ -524,7 +524,7 @@
     <div class="container">
       <h1>Add Data Entry</h1>
       <p class="subtitle">Register a measurement, processing output, file, or external link and connect it to the right sample or dataset.</p>
-      <div class="form-note">Upload files first through the form flow; the generated OneDrive link is saved into the Notion Link field. Dataset children inherit the sample relation from the selected parent dataset.</div>
+      <div class="form-note">Upload files first through the form flow; the generated file link is saved into the Notion Link field. Dataset children inherit the sample relation from the selected parent dataset.</div>
 
       <div id="message" class="message"></div>
 
@@ -625,7 +625,7 @@
             <option value="link">Link</option>
             <option value="file">File</option>
           </select>
-          <div class="file-info">Choose Link for existing URLs, or File to upload directly into OneDrive before the Notion entry is created.</div>
+          <div class="file-info">Choose Link for existing URLs, or File to upload to {{ storage_label }} before the Notion entry is created.</div>
         </div>
 
         <!-- 6.1 Link -->
@@ -643,7 +643,7 @@
             <label for="bigFile">6.2 Files <span class="required">*</span></label>
             <input type="file" id="bigFile" />
             <div class="file-info">
-              For large files, the recommended approach is: backend creates an upload session → browser uploads directly to OneDrive → backend stores the OneDrive path.
+              {% if storage_backend == 'local' %}Files are uploaded to this server in small chunks, so large files work and an interrupted upload resumes. The generated file link is saved into the Notion Link field.{% else %}For large files, the recommended approach is: backend creates an upload session → browser uploads directly to OneDrive → backend stores the OneDrive path.{% endif %}
             </div>
 
             <div id="uploadStatus" class="message" style="display:block;margin-top:12px;">
@@ -698,6 +698,7 @@
   </div>
 
 <script>
+const STORAGE_BACKEND = {{ storage_backend|tojson }};
 /* ✅ CHANGED: we keep the selected file here but do NOT upload on selection */
 let pendingFile = null;
 
@@ -1183,6 +1184,127 @@ async function uploadFileToOneDrive({
 
 
 /* =========================================================
+   Upload via OneDrive (STORAGE_BACKEND=onedrive): browser -> OneDrive upload session
+========================================================= */
+async function uploadViaOneDrive(file) {
+  setUploadStatus('', 'Preparing OneDrive upload session…');
+  const session = await createUploadSession(file);
+  lastUploadSession = session;
+
+  if (!session || !session.upload_url) {
+    throw new Error('Backend did not return upload_url');
+  }
+
+  setUploadStatus('', 'Uploading to OneDrive…');
+  const item = await uploadFileToOneDrive({
+    file: file,
+    uploadUrl: session.upload_url,
+    onProgress: (uploaded, total) => {
+      const percent = Math.round((uploaded / total) * 100);
+      setUploadStatus('', `Uploading… ${percent}%`);
+    }
+  });
+  return { id: item.id || '', url: item.webUrl || '' };
+}
+
+/* =========================================================
+   Upload to this server (STORAGE_BACKEND=local): chunked and resumable
+   Each chunk is a small request, so large files are not limited by proxy or worker timeouts,
+   and a dropped connection continues from the byte the server already has.
+========================================================= */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function readUploadJson(response) {
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (e) {
+    // Not JSON (for example a proxy error page): use the status-based message below.
+  }
+  if (!response.ok || data.success === false) {
+    const error = new Error(data.error || `Upload failed (HTTP ${response.status}).`);
+    error.status = response.status;
+    error.received = data.received;
+    throw error;
+  }
+  return data;
+}
+
+function isRetryableUploadError(err) {
+  // Network failures and temporary server errors are retried. Anything else (for example 507, disk full) will not fix itself.
+  return err.status === undefined || [500, 502, 503, 504].includes(err.status);
+}
+
+async function serverUploadOffset(uploadId, fallback) {
+  try {
+    const data = await readUploadJson(await fetch(`/api/uploads/${uploadId}`));
+    return data.received;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+async function sendChunk(uploadId, file, offset, chunkSize) {
+  const maxAttempts = 5;
+  for (let attempt = 1; ; attempt++) {
+    const end = Math.min(offset + chunkSize, file.size);
+    try {
+      const response = await fetch(`/api/uploads/${uploadId}`, {
+        method: 'PUT',
+        headers: { 'Upload-Offset': String(offset), 'Content-Type': 'application/octet-stream' },
+        body: file.slice(offset, end)
+      });
+      return (await readUploadJson(response)).received;
+    } catch (err) {
+      // 409: the server is at another offset (for example this chunk already arrived). Carry on from there.
+      if (err.status === 409 && Number.isInteger(err.received)) return err.received;
+      if (!isRetryableUploadError(err) || attempt === maxAttempts) throw err;
+      await sleep(attempt * 2000);
+      // The server may have kept part of the chunk: ask where it is and carry on from there.
+      const current = await serverUploadOffset(uploadId, offset);
+      if (current !== offset) return current;
+    }
+  }
+}
+
+async function uploadViaServer(file) {
+  const startResponse = await fetch('/api/uploads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filename: file.name,
+      size: file.size,
+      entry_name: document.getElementById('name').value.trim() || 'data_entry',
+      parent_sample: document.getElementById('parent_sample')?.value || '',
+      parent_dataset: document.getElementById('parent_dataset')?.value || ''
+    })
+  });
+  const upload = await readUploadJson(startResponse);
+
+  let offset = upload.received || 0;
+  let stalled = 0;
+  while (offset < file.size) {
+    const next = await sendChunk(upload.upload_id, file, offset, upload.chunk_size);
+    stalled = next > offset ? 0 : stalled + 1;
+    if (stalled >= 5) throw new Error('The upload is not making progress.');
+    offset = next;
+    setUploadStatus('', `Uploading… ${Math.round((offset / file.size) * 100)}%`);
+  }
+
+  // Completing is safe to repeat: the server returns the same result the second time.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const done = await readUploadJson(await fetch(`/api/uploads/${upload.upload_id}/complete`, { method: 'POST' }));
+      return { id: done.upload_id, url: done.url };
+    } catch (err) {
+      if (!isRetryableUploadError(err) || attempt === 5) throw err;
+      await sleep(attempt * 2000);
+    }
+  }
+}
+
+
+/* =========================================================
    ✅ CHANGED: file selection now only STAGES the file (no upload)
 ========================================================= */
 document.getElementById('bigFile').addEventListener('change', (e) => {
@@ -1372,41 +1494,14 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
     }
 
     try {
-      setUploadStatus('', 'Preparing OneDrive upload session…');
-      const session = await createUploadSession(pendingFile);
-      lastUploadSession = session;
+      submitBtn.disabled = true;
+      submitBtn.textContent = '⏳ Uploading…';
+      const stored = STORAGE_BACKEND === 'local'
+        ? await uploadViaServer(pendingFile)
+        : await uploadViaOneDrive(pendingFile);
 
-      if (!session || !session.upload_url) {
-        throw new Error('Backend did not return upload_url');
-      }
-
-      
-
-      setUploadStatus('', 'Uploading to OneDrive…');
-      //await uploadToOneDriveSimplePUT(session.upload_url, pendingFile);
-      const item = await uploadFileToOneDrive({
-        file: pendingFile,
-        uploadUrl: session.upload_url,
-        onProgress: (uploaded, total) => {
-          const percent = Math.round((uploaded / total) * 100);
-          setUploadStatus('', `Uploading… ${percent}%`);
-        }
-      });
-
-      document.getElementById('onedrive_item_id').value = item.id || '';
-      document.getElementById('onedrive_path').value = item.webUrl || '';
-
-      // await uploadFileToOneDrive({
-      //   file: pendingFile,
-      //   uploadUrl: session.upload_url,
-      //   onProgress: (uploaded, total) => {
-      //     const percent = Math.round((uploaded / total) * 100);
-      //     setUploadStatus('', `Uploading… ${percent}%`);
-      //   }
-      // });
-
-      // document.getElementById('onedrive_path').value = session.onedrive_path || '';
-      // document.getElementById('onedrive_item_id').value = session.item_id || '';
+      document.getElementById('onedrive_item_id').value = stored.id || '';
+      document.getElementById('onedrive_path').value = stored.url || '';
 
       setUploadStatus('success', 'Upload completed ✔');
     } catch (err) {
@@ -1414,6 +1509,8 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       document.getElementById('onedrive_path').value = '';
       document.getElementById('onedrive_item_id').value = '';
       lastUploadSession = null;
+      submitBtn.disabled = false;
+      submitBtn.textContent = '✓ Submit';
 
       setUploadStatus('error', 'Upload failed: ' + err.message);
 

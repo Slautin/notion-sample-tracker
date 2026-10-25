@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from notion_sample_tracker.settings import DEFAULT_DEV_SECRET, Settings
@@ -18,7 +20,20 @@ REQUIRED_ENV = {
 def _set_required(monkeypatch):
     for key, value in REQUIRED_ENV.items():
         monkeypatch.setenv(key, value)
-    for key in ("ONEDRIVE_AUTH_MODE", "ONEDRIVE_REFRESH_TOKEN", "ONEDRIVE_ALLOWED_HOST_SUFFIXES"):
+    for key in (
+        "ONEDRIVE_AUTH_MODE",
+        "ONEDRIVE_REFRESH_TOKEN",
+        "ONEDRIVE_ALLOWED_HOST_SUFFIXES",
+        "STORAGE_BACKEND",
+        "STORAGE_ROOT",
+        "STORAGE_MIN_FREE_MB",
+        "MAX_RESULT_FILE_MB",
+        "UPLOAD_CHUNK_MB",
+        "UPLOAD_TTL_HOURS",
+        "ACCESS_PASSWORD",
+        "ACCESS_USERNAME",
+        "ACCESS_BEHIND_AUTH_PROXY",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -171,3 +186,131 @@ def test_allowed_host_suffixes_default_to_unset(monkeypatch):
     _set_required(monkeypatch)
 
     assert Settings.from_env().onedrive_allowed_host_suffixes == ()
+
+
+# --- storage backend and access control ---
+
+
+def _set_local(monkeypatch, production=False):
+    (_set_production if production else _set_required)(monkeypatch)
+    for key in ("ONEDRIVE_TENANT_ID", "ONEDRIVE_CLIENT_ID", "ONEDRIVE_CLIENT_SECRET", "ONEDRIVE_DRIVE_ID"):
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+
+
+def test_onedrive_stays_the_default_backend_and_still_needs_its_settings(monkeypatch):
+    _set_required(monkeypatch)
+
+    assert Settings.from_env().storage_backend == "onedrive"
+    monkeypatch.delenv("ONEDRIVE_TENANT_ID")
+    with pytest.raises(RuntimeError, match="ONEDRIVE_TENANT_ID"):
+        Settings.from_env()
+
+
+def test_local_storage_needs_no_onedrive_settings(monkeypatch):
+    _set_local(monkeypatch)
+
+    settings = Settings.from_env()
+
+    assert settings.storage_backend == "local"
+    assert settings.storage_label == "server storage"
+    assert settings.storage_root == Path("./files")
+    assert (settings.upload_chunk_mb, settings.max_result_file_mb, settings.upload_ttl_hours) == (8, 2048, 24)
+    assert settings.access_password == "" and settings.access_behind_auth_proxy is False
+
+
+def test_the_backend_name_is_case_insensitive_and_unknown_names_are_rejected(monkeypatch):
+    _set_local(monkeypatch)
+    monkeypatch.setenv("STORAGE_BACKEND", "LOCAL")
+    assert Settings.from_env().storage_backend == "local"
+
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    with pytest.raises(RuntimeError, match="onedrive or local"):
+        Settings.from_env()
+
+
+def test_production_local_storage_defaults_to_the_data_volume(monkeypatch):
+    _set_local(monkeypatch, production=True)
+    monkeypatch.setenv("ACCESS_BEHIND_AUTH_PROXY", "true")
+
+    assert Settings.from_env().storage_root == Path("/data/files")
+
+
+def test_production_local_storage_refuses_to_start_without_access_control(monkeypatch):
+    _set_local(monkeypatch, production=True)
+
+    with pytest.raises(RuntimeError, match="access control"):
+        Settings.from_env()
+
+
+def test_production_local_storage_accepts_a_password_or_a_declared_proxy(monkeypatch):
+    _set_local(monkeypatch, production=True)
+    monkeypatch.setenv("ACCESS_PASSWORD", "a-long-shared-password")
+    assert Settings.from_env().access_password == "a-long-shared-password"
+
+    monkeypatch.delenv("ACCESS_PASSWORD")
+    monkeypatch.setenv("ACCESS_BEHIND_AUTH_PROXY", "true")
+    assert Settings.from_env().access_behind_auth_proxy is True
+
+
+def test_local_storage_in_development_needs_no_access_control(monkeypatch):
+    _set_local(monkeypatch)
+
+    Settings.from_env()
+
+
+def test_production_passwords_must_be_long_and_sent_over_https(monkeypatch):
+    _set_local(monkeypatch, production=True)
+    monkeypatch.setenv("ACCESS_PASSWORD", "too-short")
+    with pytest.raises(RuntimeError, match="12 characters"):
+        Settings.from_env()
+
+    monkeypatch.setenv("ACCESS_PASSWORD", "a-long-shared-password")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "http://sample-tracker.example")
+    with pytest.raises(RuntimeError, match="https"):
+        Settings.from_env()
+
+
+def test_the_password_rules_apply_to_the_onedrive_backend_too(monkeypatch):
+    _set_production(monkeypatch)
+    monkeypatch.setenv("ACCESS_PASSWORD", "too-short")
+
+    with pytest.raises(RuntimeError, match="12 characters"):
+        Settings.from_env()
+
+
+def test_the_access_username_cannot_contain_a_colon(monkeypatch):
+    _set_local(monkeypatch)
+    monkeypatch.setenv("ACCESS_PASSWORD", "a-long-shared-password")
+    monkeypatch.setenv("ACCESS_USERNAME", "a:b")
+
+    with pytest.raises(RuntimeError, match="ACCESS_USERNAME"):
+        Settings.from_env()
+
+
+def test_production_storage_root_must_be_absolute(monkeypatch):
+    _set_local(monkeypatch, production=True)
+    monkeypatch.setenv("ACCESS_BEHIND_AUTH_PROXY", "true")
+    monkeypatch.setenv("STORAGE_ROOT", "files")
+
+    with pytest.raises(RuntimeError, match="absolute"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    "name, value, message",
+    [
+        ("MAX_RESULT_FILE_MB", "0", "MAX_RESULT_FILE_MB"),
+        ("UPLOAD_CHUNK_MB", "0", "UPLOAD_CHUNK_MB"),
+        ("UPLOAD_CHUNK_MB", "300", "UPLOAD_CHUNK_MB must be less than or equal to MAX_UPLOAD_MB"),
+        ("UPLOAD_TTL_HOURS", "0", "UPLOAD_TTL_HOURS"),
+        ("STORAGE_MIN_FREE_MB", "-1", "STORAGE_MIN_FREE_MB"),
+        ("UPLOAD_CHUNK_MB", "eight", "UPLOAD_CHUNK_MB must be an integer"),
+    ],
+)
+def test_local_storage_limits_are_validated(monkeypatch, name, value, message):
+    _set_local(monkeypatch)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(RuntimeError, match=message):
+        Settings.from_env()

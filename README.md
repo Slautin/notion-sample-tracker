@@ -114,9 +114,23 @@ The services intentionally keep property names centralized in `settings.py`, so 
 
 Set `NOTION_HOME_URL` in production if `/` should redirect to your main Notion page. The older `NOTION_PAGE` variable name is also supported. Put links on that Notion page to `/samples/new` and `/results/new` on the deployed app domain.
 
+## Storage backends
+
+`STORAGE_BACKEND` chooses where archived files go. Notion behaves the same with either.
+
+| | `onedrive` (default) | `local` |
+|---|---|---|
+| Files live in | UTK SharePoint / OneDrive for Business | a directory on the machine running the app (`STORAGE_ROOT`) |
+| Result files | the browser uploads straight to OneDrive | the browser uploads to this app in small resumable chunks |
+| Who can open a file link | people the drive is shared with | whoever can log in to this app (`/files/...`) |
+| Backups | Microsoft | you |
+| Needs | an Entra app registration and admin consent | disk space, backups and access control |
+
+Both use the same folder layout (`samples/<composition>/<name>/...`, `.../results/<entry>/...`) and write the same `record.json` snapshots.
+
 ## OneDrive (UTK only)
 
-Files are archived to the organization's (UTK) SharePoint or OneDrive for Business drive, never a personal OneDrive:
+With `STORAGE_BACKEND=onedrive` (the default), files are archived to the organization's (UTK) SharePoint or OneDrive for Business drive, never a personal OneDrive:
 
 - `ONEDRIVE_TENANT_ID` must be the UTK tenant ID. `common`, `consumers` and `organizations` are rejected, and production requires the GUID.
 - `ONEDRIVE_DRIVE_ID` is always required. Uploads go to `/drives/{ONEDRIVE_DRIVE_ID}`; there is no `/me/drive` fallback.
@@ -138,6 +152,81 @@ Set `APP_ENV=production` in production. Production mode requires a non-default
 `APP_SECRET_KEY`, a non-local `PUBLIC_BASE_URL`, a UTK tenant GUID, `client_credentials`
 auth, and an `ONEDRIVE_DRIVE_ID`. Keep
 `ENABLE_BACKLOG_VIEW=false` unless the app is behind a separate trusted access control.
+
+## Local server storage
+
+Set `STORAGE_BACKEND=local` to keep files on the machine that runs the app. The `ONEDRIVE_*` variables are then not needed.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `STORAGE_ROOT` | `./files` (development), `/data/files` (production) | Where files are stored. Must be an absolute path in production, outside the application directory. |
+| `STORAGE_MIN_FREE_MB` | `1024` | Uploads that would leave less free disk than this are refused. |
+| `MAX_RESULT_FILE_MB` | `2048` | Largest result file. Raise it for bigger datasets. |
+| `UPLOAD_CHUNK_MB` | `8` | Size of each upload request. Must not exceed `MAX_UPLOAD_MB` or the proxy's body limit. |
+| `UPLOAD_TTL_HOURS` | `24` | An unfinished upload is discarded after this long without activity. |
+| `ALLOWED_UPLOAD_EXTENSIONS` | office, image and text types | Lab formats such as `.ibw`, `.h5` or `.mat` are **not** in the default list. Add the ones you need. |
+
+How it works:
+
+- Samples: `record.json`, the QR code and the photos are written under `STORAGE_ROOT/samples/...`.
+- Result files: the browser sends the file in `UPLOAD_CHUNK_MB` pieces. The app appends them to a staging file in `STORAGE_ROOT/.uploads/` and moves it into `.../results/<entry>/` when the last piece has arrived. An interrupted upload resumes where it stopped. A name that already exists gets `-1`, `-2`, ... appended instead of being overwritten.
+- The link saved in the Notion `Link` field is `PUBLIC_BASE_URL/files/<path>`, served as a download. The app checks that the link points to a stored file before saving it, so a typed-in address is rejected. Keep `PUBLIC_BASE_URL` stable: changing it breaks links already stored in Notion.
+- Names that start with a dot (the staging area, temporary files) are never served, and symbolic links inside the storage root are refused.
+- Put `STORAGE_ROOT` on a local disk. Upload locking uses `flock`, which is not reliable on some network file systems (NFS, SMB).
+
+### Access control
+
+The app serves the files itself, so production refuses to start with local storage unless you choose one of:
+
+- `ACCESS_PASSWORD`: HTTP Basic for the whole site (username `ACCESS_USERNAME`, default `lab`). It needs 12+ characters and an `https://` `PUBLIC_BASE_URL`. There is no brute-force protection, so use a long password. Good for a prototype or a small lab.
+- `ACCESS_BEHIND_AUTH_PROXY=true`: your statement that a login in front of the app (nginx SSO etc.) protects every path, including `/files/`. The app cannot check this, so bind gunicorn to `127.0.0.1` (`GUNICORN_BIND`) so the proxy is the only way in.
+
+`/health` and `/healthz` stay open for health checks. POST and PUT requests that a browser marks as coming from another site are refused.
+
+### Deploying on Railway
+
+1. Set the variables: `APP_ENV=production`, `APP_SECRET_KEY`, `PUBLIC_BASE_URL` (your https Railway domain), the Notion variables, `STORAGE_BACKEND=local`, and `ACCESS_PASSWORD`.
+2. Add a volume mounted at `/data` and set `RAILWAY_RUN_UID=0`. The image runs as a non-root user and Railway mounts volumes as root; the app checks at startup that it can write and says so if it cannot.
+3. Know the limits: one volume per service, no replicas with a volume, a redeploy interrupts uploads in progress, and volume size depends on the plan (5 GB Hobby, 50 GB Pro at the time of writing). Railway is a third-party cloud, so keep sensitive or restricted data off it.
+
+### Deploying on a UTK Linux server
+
+Templates for the steps below are in `deploy/utk-server/`: a systemd unit, an nginx site and an environment file. They have not been run against a real server, so read them before use. Python 3.10 or newer is required.
+
+```bash
+sudo useradd --system --home-dir /var/lib/sampletracker --shell /usr/sbin/nologin sampletracker
+sudo mkdir -p /opt/sampletracker /etc/sampletracker /var/lib/sampletracker/files /var/lib/sampletracker/backlog
+sudo chown -R sampletracker:sampletracker /var/lib/sampletracker
+sudo git clone <this repository> /opt/sampletracker/app
+sudo python3 -m venv /opt/sampletracker/venv
+sudo /opt/sampletracker/venv/bin/pip install /opt/sampletracker/app
+
+sudo cp /opt/sampletracker/app/deploy/utk-server/sampletracker.env.example /etc/sampletracker/sampletracker.env
+sudo chmod 600 /etc/sampletracker/sampletracker.env      # then edit it
+sudo cp /opt/sampletracker/app/deploy/utk-server/sampletracker.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now sampletracker
+```
+
+Then install `nginx-sampletracker.conf` (set the host name and certificate paths, and add your login), reload nginx and check:
+
+```bash
+curl -s http://127.0.0.1:8000/healthz        # {"status":"ok","storage_backend":"local",...}
+sudo journalctl -u sampletracker -n 50       # startup errors, e.g. an unwritable STORAGE_ROOT
+```
+
+Upgrade with `git pull`, `pip install /opt/sampletracker/app`, `systemctl restart sampletracker`.
+
+Gunicorn settings come from `gunicorn.conf.py` and can be overridden with `GUNICORN_BIND`, `WEB_CONCURRENCY`, `GUNICORN_THREADS` and `GUNICORN_TIMEOUT`.
+
+### Backups
+
+With local storage the files exist nowhere else, and Notion only holds links. Back up `STORAGE_ROOT` (not the `.uploads/` staging folder) and `BACKLOG_DIR`, for example nightly to another host:
+
+```bash
+rsync -a --exclude '.uploads/' /var/lib/sampletracker/ backup-host:/backups/sampletracker/
+```
+
+Test a restore before you rely on it.
 
 ## Stability Notes
 

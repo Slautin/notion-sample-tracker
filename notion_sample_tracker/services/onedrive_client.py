@@ -9,6 +9,8 @@ from urllib.parse import quote, urlparse
 
 import requests
 
+from notion_sample_tracker.services.storage import UploadResult
+
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 
@@ -22,12 +24,6 @@ TOKEN_REFRESH_MARGIN_SECONDS = 300
 
 class OneDriveConfigError(RuntimeError):
     """The OneDrive configuration or target drive is not an allowed organizational drive."""
-
-
-@dataclass(frozen=True)
-class UploadResult:
-    path: str
-    web_url: str = ""
 
 
 @dataclass(frozen=True)

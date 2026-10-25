@@ -1,0 +1,29 @@
+# systemd unit for the Notion Sample Tracker on a Linux server.
+# Install as /etc/systemd/system/sampletracker.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now sampletracker
+# Paths below assume the layout in the README ("Deploying on a UTK Linux server").
+[Unit]
+Description=Notion Sample Tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sampletracker
+Group=sampletracker
+WorkingDirectory=/opt/sampletracker/app
+EnvironmentFile=/etc/sampletracker/sampletracker.env
+ExecStart=/opt/sampletracker/venv/bin/gunicorn -c /opt/sampletracker/app/gunicorn.conf.py "notion_sample_tracker:create_app()"
+Restart=on-failure
+RestartSec=5
+# Files are created 0640 and directories 0750, so members of the sampletracker group can read them (backups, admins).
+UMask=0027
+
+# Hardening: the service can only write to its data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sampletracker
+
+[Install]
+WantedBy=multi-user.target
