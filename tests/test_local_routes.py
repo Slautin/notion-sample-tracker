@@ -89,6 +89,9 @@ def notion_state(monkeypatch):
         def update_archive_status(self, page_id, status, error=""):
             state.statuses.append((status, error))
 
+        def describe_relations(self, page):
+            return {}, [], []
+
     monkeypatch.setattr(app_module, "NotionRepository", StubNotion)
     return state
 

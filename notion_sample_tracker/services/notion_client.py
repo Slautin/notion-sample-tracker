@@ -105,6 +105,36 @@ class NotionRepository:
             return prop["select"].get("name", "")
         return ""
 
+    def describe_relations(self, page: dict[str, Any]) -> tuple[dict[str, list[dict[str, str]]], list[dict[str, Any]], list[str]]:
+        """Names for every linked record on `page`, the linked Source (People) pages, and any lookup problems.
+
+        Reads only. A lookup that fails keeps the ID with an empty name rather than failing the submission.
+        """
+        relations: dict[str, list[dict[str, str]]] = {}
+        people: list[dict[str, Any]] = []
+        problems: list[str] = []
+        fetched: dict[str, dict[str, Any] | None] = {}
+        for name, prop in page.get("properties", {}).items():
+            if prop.get("type") != "relation":
+                continue
+            if prop.get("has_more"):
+                problems.append(f"{name}: Notion listed only the first linked records")
+            items = []
+            for ref in prop.get("relation", []):
+                related_id = ref.get("id", "")
+                if related_id not in fetched:
+                    try:
+                        fetched[related_id] = self.client.pages.retrieve(page_id=related_id)
+                    except Exception as exc:
+                        fetched[related_id] = None
+                        problems.append(f"{name} {related_id}: {exc}")
+                related = fetched[related_id]
+                items.append({"id": related_id, "name": self._title_from_page(related) if related else ""})
+                if related and name == "Source" and all(person["id"] != related["id"] for person in people):
+                    people.append(related)
+            relations[name] = items
+        return relations, people, problems
+
     def retrieve_schema(self, database_id: str) -> dict[str, Any]:
         return self._retrieve_collection(database_id)
 

@@ -110,6 +110,7 @@ The services intentionally keep property names centralized in `settings.py`, so 
 - `notion_sample_tracker/services/notion_client.py` - Notion CRUD and schema helpers
 - `notion_sample_tracker/services/onedrive_client.py` - Microsoft Graph upload/archive client
 - `notion_sample_tracker/services/backlog.py` - local JSONL audit log
+- `notion_sample_tracker/records_export.py` - CSV tables built from the saved `record.json` files
 - `notion_sample_tracker/templates/` - deployable web forms
 
 ## Start page
@@ -118,6 +119,7 @@ Opening the app's address shows a start page in the same style as the forms. **A
 
 - Set the database links with `NOTION_SAMPLES_URL`, `NOTION_RESULTS_URL` and `NOTION_SOURCES_URL`. In Notion, open the database view you want people to see and use Copy link. A button without a link is hidden; a link without `https://` is refused at startup.
 - `NOTION_HOME_URL` (or the older `NOTION_PAGE`) adds an "Open the Notion workspace" link. The start page no longer redirects to Notion.
+- With local storage it also has **Samples CSV**, **Results CSV** and **Sources CSV** downloads (see [Server records and CSV export](#server-records-and-csv-export)).
 
 ## Storage backends
 
@@ -132,6 +134,36 @@ Opening the app's address shows a start page in the same style as the forms. **A
 | Needs | an Entra app registration and admin consent | disk space, backups and access control |
 
 Both use the same folder layout (`samples/<composition>/<name>/...`, `.../results/<entry>/...`) and write the same `record.json` snapshots.
+
+## Server records and CSV export
+
+Each submission saves a `record.json` next to its files, so the server holds a readable copy of what is in Notion:
+
+- `notion`: the whole Notion page as Notion returned it after the submission's last write (the archive status), so the QR code, the photos and the final `Archive Status` are in it.
+- `relations`: the name of every linked record (`Source`, `Parent Sample`, `Sample`, `Related Results`), so the record can be read without Notion. If a linked page cannot be read, its name is left empty and `relations_error` says why.
+- `kind` (`sample`, `result` or `source`), `captured_at`, and what was submitted (`form`, `raw_form`, the files and QR code; for an amendment also the revision ID and the changed fields).
+
+Samples are saved at `samples/<composition>/<name>/record.json`. An amendment writes `revisions/<id>/record.json` and `current/record.json`, both with the page after the amendment. Results are saved at `.../results/<entry>/record.json`. Every Source a submission links to is saved as `sources/<name>/record.json` and refreshed whenever a later submission links to it.
+
+The record is written once before the archive status is set, so a record exists before Notion can say `Archive complete`, and again afterwards from the page Notion returned. If the second write fails, the page is marked `Failed archive`.
+
+With local storage, the start page's CSV buttons (`/exports/samples.csv`, `/exports/results.csv`, `/exports/sources.csv`) build a table from the newest record of each page when you click them:
+
+- The title column comes first, then the other Notion properties A to Z, then `notion_page_id`, `notion_url`, `created_time`, `last_edited_time`, `captured_at` and `record_path`.
+- Linked records appear by name. Several values in one cell are separated by `; `. Files that Notion stores appear by name only, because their Notion links expire within an hour.
+- The files are UTF-8 with a byte order mark so Excel shows µ, Å and ° correctly. A cell that a spreadsheet would run as a formula starts with `'`.
+
+The same tables from the command line. This also works on a synced copy of the OneDrive folder:
+
+```bash
+python -m notion_sample_tracker.records_export --root /var/lib/sampletracker/files --out ./exports
+```
+
+What the server copy does not show:
+
+- Edits made directly in Notion after a page's last submission through the forms.
+- The far side of a two-way relation. For example, if the Samples database has a column listing the results that link to each sample, a sample's record shows that column as it was at the sample's own last submission. The Results table has the link.
+- Some details in older records. Records saved before this version lack `relations` and `captured_at`, and their page predates the QR code, the photos and the final archive status. Amendment records from that time hold no page and are skipped (the command lists skipped files), so a sample amended before this version shows its values from before that amendment until it is amended again.
 
 ## OneDrive (UTK only)
 

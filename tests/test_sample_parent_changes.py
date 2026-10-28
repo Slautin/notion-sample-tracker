@@ -216,6 +216,9 @@ def sample_client(tmp_path, monkeypatch):
         def update_archive_status(self, page_id, status, error=""):
             return state.page
 
+        def describe_relations(self, page):
+            return {}, [], []
+
     class StubOneDrive:
         def __init__(self, **kwargs):
             pass

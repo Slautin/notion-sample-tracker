@@ -10,8 +10,9 @@ from typing import Any, Callable
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 
+from notion_sample_tracker import records_export
 from notion_sample_tracker.access import install_access_control
-from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, ResultForm, SampleForm
+from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, ResultForm, SampleForm, now_iso
 from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, safe_path_segment, safe_upload_filename
 from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
@@ -27,7 +28,7 @@ from notion_sample_tracker.services.notion_client import NotionRepository
 from notion_sample_tracker.services.onedrive_client import OneDriveClient, OneDriveConfigError
 from notion_sample_tracker.services.pdf_receipt import make_receipt_pdf
 from notion_sample_tracker.services.qrcode_service import make_qr_png_bytes
-from notion_sample_tracker.services.storage import Storage
+from notion_sample_tracker.services.storage import Storage, UploadResult
 from notion_sample_tracker.settings import Settings
 
 
@@ -129,9 +130,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         try:
             _validate_sample_form(form, notion)
             page = notion.create_sample(form)
-            snapshot_path = f"samples/{page['id']}/record.json"
-            onedrive_result = storage.upload_json(snapshot_path, {"form": form.to_dict(), "notion": page})
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
+            _, (onedrive_result,), _ = _archive_record(notion, storage, [f"samples/{page['id']}/record.json"], "sample", page, [], form=form.to_dict())
             backlog.append(
                 BacklogEvent(
                     action="create",
@@ -161,8 +160,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         backlog.append(BacklogEvent(action="update", entity="sample", payload=form.to_dict(), notion_page_id=page_id))
         try:
             page = notion.update_sample(page_id, form)
-            onedrive_result = storage.upload_json(f"samples/{page_id}/record.json", {"form": form.to_dict(), "notion": page})
-            notion.update_archive_status(page_id, ARCHIVE_COMPLETE)
+            _, (onedrive_result,), _ = _archive_record(notion, storage, [f"samples/{page_id}/record.json"], "sample", page, [], form=form.to_dict())
             backlog.append(
                 BacklogEvent(
                     action="update",
@@ -195,8 +193,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             _validate_result_raw(_form_payload(request.form), notion, preflight=True)
             uploaded_paths = _archive_uploads(storage, "results/pending", request.files.getlist("files"), settings)
             page = notion.create_result(form)
-            snapshot = storage.upload_json(f"results/{page['id']}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
+            _, (snapshot,), _ = _archive_record(
+                notion, storage, [f"results/{page['id']}/record.json"], "result", page, [], form=form.to_dict(), files=uploaded_paths
+            )
             backlog.append(
                 BacklogEvent(
                     action="create",
@@ -234,8 +233,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         try:
             uploaded_paths = _archive_uploads(storage, f"results/{page_id}/files", request.files.getlist("files"), settings)
             page = notion.update_result(page_id, form)
-            snapshot = storage.upload_json(f"results/{page_id}/record.json", {"form": form.to_dict(), "notion": page, "files": uploaded_paths})
-            notion.update_archive_status(page_id, ARCHIVE_COMPLETE)
+            _, (snapshot,), _ = _archive_record(
+                notion, storage, [f"results/{page_id}/record.json"], "result", page, [], form=form.to_dict(), files=uploaded_paths
+            )
             backlog.append(
                 BacklogEvent(
                     action="update",
@@ -344,21 +344,20 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             notion.set_uploaded_file(page["id"], "QRCode", qr_name, qr_bytes, "image/png")
             app_log("sample_qr_uploaded", seconds=round(time.perf_counter() - started, 3))
             started = time.perf_counter()
-            snapshot = storage.upload_json(
-                f"{sample_folder}/record.json",
-                {
-                    "form": form.to_dict(),
-                    "raw_form": _form_payload(request.form),
-                    "notion": page,
-                    "files": uploaded_files,
-                    "photo_errors": photo_errors,
-                    "qr": qr_upload.path,
-                },
+            record, (snapshot,), source_paths = _archive_record(
+                notion,
+                storage,
+                [f"{sample_folder}/record.json"],
+                "sample",
+                page,
+                photo_errors,
+                form=form.to_dict(),
+                raw_form=_form_payload(request.form),
+                files=uploaded_files,
+                photo_errors=photo_errors,
+                qr=qr_upload.path,
             )
-            if photo_errors:
-                _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, "; ".join(photo_errors))
-            else:
-                notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
+            page = record["notion"]
             app_log("sample_snapshot_uploaded", seconds=round(time.perf_counter() - started, 3))
             backlog.append(
                 BacklogEvent(
@@ -366,7 +365,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     entity="sample",
                     payload=form.to_dict(),
                     notion_page_id=page["id"],
-                    onedrive_paths=[snapshot.path, qr_upload.path, *[item["path"] for item in uploaded_files]],
+                    onedrive_paths=[snapshot.path, qr_upload.path, *[item["path"] for item in uploaded_files], *source_paths],
                     status="partial" if photo_errors else "complete",
                     error="; ".join(photo_errors),
                 )
@@ -443,16 +442,17 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
         try:
             started = time.perf_counter()
-            snapshot = storage.upload_json(
-                f"{result_folder}/record.json",
-                {"form": form.to_dict(), "raw_form": raw_form, "notion": page, "qr": qr_path},
+            record, (snapshot,), source_paths = _archive_record(
+                notion, storage, [f"{result_folder}/record.json"], "result", page, artifact_errors, form=form.to_dict(), raw_form=raw_form, qr=qr_path
             )
-            onedrive_paths.append(snapshot.path)
+            page = record["notion"]
+            onedrive_paths.extend([snapshot.path, *source_paths])
             app_log("result_snapshot_uploaded", page_id=page["id"], seconds=round(time.perf_counter() - started, 3))
         except Exception as exc:
             error = f"snapshot_upload: {exc}"
             artifact_errors.append(error)
             app_log("result_artifact_failed", page_id=page["id"], stage="snapshot_upload", error=str(exc))
+            _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, "; ".join(artifact_errors))
 
         try:
             backlog.append(
@@ -478,9 +478,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         }
         if artifact_errors:
             response["warning"] = "; ".join(artifact_errors)
-            _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, response["warning"])
-        else:
-            notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
         return jsonify(response)
 
     @app.post("/api/receipt-pdf")
@@ -600,6 +597,22 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             response.headers["Cache-Control"] = "private, no-cache"
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+            return response
+
+        @app.get("/exports/<table>.csv")
+        def export_records(table: str):
+            if table not in records_export.TABLES:
+                abort(404)
+            records, skipped = records_export.load_records(local_storage.real_root)
+            kind = records_export.TABLES[table]
+            columns, rows = records_export.build_table([record for record in records_export.latest_per_page(records) if record.kind == kind])
+            if skipped:
+                app_log("export_skipped_files", table=table, count=len(skipped), first=skipped[0])
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            response = app.response_class(records_export.csv_bytes(columns, rows), mimetype="text/csv")
+            response.headers["Content-Disposition"] = f'attachment; filename="{table}-{stamp}.csv"'
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
             return response
 
     @app.post("/api/save-json")
@@ -742,26 +755,32 @@ def _submit_sample_amendment(
         request.files.getlist("photos"),
         settings,
     )
-    revision_payload = {
-        "revision_id": revision_id,
-        "amended_at": datetime.now(timezone.utc).isoformat(),
-        "form": form.to_dict(),
-        "raw_form": _form_payload(request.form),
-        "notion_page_id": page["id"],
-        "notion_page_url": page.get("url", ""),
-        "changed_fields": changes,
-        "new_files": uploaded_files,
-        "photo_errors": photo_errors,
-    }
-    revision_record = storage.upload_json(f"{revision_prefix}/record.json", revision_payload)
-    changed_record = storage.upload_json(f"{revision_prefix}/changed_fields.json", {"revision_id": revision_id, "changed_fields": changes})
-    files_record = storage.upload_json(f"{revision_prefix}/new_files.json", {"revision_id": revision_id, "files": uploaded_files})
-    current_record = storage.upload_json(f"{sample_folder}/current/record.json", revision_payload)
-
-    if photo_errors:
-        _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, "; ".join(photo_errors))
-    else:
-        notion.update_archive_status(page["id"], ARCHIVE_COMPLETE)
+    try:
+        changed_record = storage.upload_json(f"{revision_prefix}/changed_fields.json", {"revision_id": revision_id, "changed_fields": changes})
+        files_record = storage.upload_json(f"{revision_prefix}/new_files.json", {"revision_id": revision_id, "files": uploaded_files})
+        # The revision and current/record.json both end up holding the page as Notion has it after the amendment.
+        record, (revision_record, current_record), source_paths = _archive_record(
+            notion,
+            storage,
+            [f"{revision_prefix}/record.json", f"{sample_folder}/current/record.json"],
+            "sample",
+            updated_page,
+            photo_errors,
+            revision_id=revision_id,
+            amended_at=datetime.now(timezone.utc).isoformat(),
+            form=form.to_dict(),
+            raw_form=_form_payload(request.form),
+            notion_page_id=page["id"],
+            notion_page_url=page.get("url", ""),
+            changed_fields=changes,
+            new_files=uploaded_files,
+            photo_errors=photo_errors,
+        )
+        updated_page = record["notion"]
+    except Exception as exc:
+        # The caller cannot mark the page: for an amendment it holds no page yet.
+        _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, f"archive: {exc}")
+        raise
     backlog.append(
         BacklogEvent(
             action="amend",
@@ -774,6 +793,7 @@ def _submit_sample_amendment(
                 files_record.path,
                 current_record.path,
                 *[item["path"] for item in uploaded_files],
+                *source_paths,
             ],
             status="partial" if photo_errors else "complete",
             error="; ".join(photo_errors),
@@ -1092,6 +1112,50 @@ def _stream_size(file_storage) -> int:
         return size
     except Exception:
         return int(getattr(file_storage, "content_length", 0) or 0)
+
+
+def _final_notion_page(notion: NotionRepository, page: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+    """Set the archive status, the last Notion write of a submission, and return the page as Notion now has it."""
+    status, error = (ARCHIVE_FAILED, "; ".join(errors)) if errors else (ARCHIVE_COMPLETE, "")
+    updated = notion.update_archive_status(page["id"], status, error)
+    # Notion answers an update with the whole page; fall back to what we had if a client returns nothing.
+    return updated if isinstance(updated, dict) and "properties" in updated else page
+
+
+def _archive_record(
+    notion: NotionRepository,
+    storage: Storage,
+    paths: list[str],
+    kind: str,
+    page: dict[str, Any],
+    errors: list[str],
+    **details: Any,
+) -> tuple[dict[str, Any], list[UploadResult], list[str]]:
+    """Save the server record of a submission and set its archive status, the last Notion write.
+
+    The record is written twice. The first write, to paths[0], happens before the status update, so a record
+    exists before Notion can say "Archive complete", even if the process dies right after. The second write,
+    to every path, holds the page Notion returned for the status update, so the record matches Notion.
+    Each linked Source is saved as sources/<name>/record.json. Callers set "Failed archive" if this raises.
+
+    Returns the record, the saved records (one per path) and the saved Source paths.
+    """
+    relations, people, problems = notion.describe_relations(page)
+    record = {"kind": kind, "captured_at": now_iso(), **details, "notion": page, "relations": relations}
+    if problems:
+        record["relations_error"] = "; ".join(problems)
+    storage.upload_json(paths[0], record)
+    source_paths = [
+        storage.upload_json(
+            f"sources/{safe_path_segment(_page_title(person), fallback='source')}/record.json",
+            {"kind": "source", "captured_at": record["captured_at"], "notion": person},
+        ).path
+        for person in people
+    ]
+    record["notion"] = _final_notion_page(notion, page, errors)
+    record["captured_at"] = now_iso()
+    saved = [storage.upload_json(path, record) for path in paths]
+    return record, saved, source_paths
 
 
 def _safe_archive_status(notion: NotionRepository, page_id: str, status: str, error: str = "") -> None:
