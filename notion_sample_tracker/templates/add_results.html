@@ -696,6 +696,23 @@
           <input type="hidden" id="sources_data" name="sources_data">
         </div>
 
+        <!-- 8) Status -->
+        <div class="form-group">
+          <label for="status">8. Status</label>
+          <select id="status" name="status">
+            <option value="">-- Select Status --</option>
+            <option value="active">Active</option>
+            <option value="withdrawn">Withdrawn</option>
+          </select>
+          <div class="file-info">Optional. To withdraw an entry, enter its name and choose Withdrawn with a reason. Nothing is deleted.</div>
+          <div id="withdrawnReasonSection" class="conditional-section" style="display:none;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label for="withdrawn_reason">8.1 Reason for withdrawal <span class="required">*</span></label>
+              <textarea id="withdrawn_reason" name="withdrawn_reason" rows="3" placeholder="For example: wrong file, failed measurement, entered by mistake"></textarea>
+            </div>
+          </div>
+        </div>
+
         <div class="button-group">
           <button type="submit" class="btn btn-primary" id="submitBtn">✓ Submit</button>
           <button type="reset" class="btn btn-secondary" id="resetBtn">Reset</button>
@@ -1660,6 +1677,15 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
 });
 
 /* Reset behavior (restore UI sections) */
+// Withdrawn needs a reason; the box shows only then.
+function toggleWithdrawnReason() {
+  const withdrawn = document.getElementById('status').value === 'withdrawn';
+  document.getElementById('withdrawnReasonSection').style.display = withdrawn ? 'block' : 'none';
+}
+document.getElementById('status').addEventListener('change', toggleWithdrawnReason);
+// A reset event fires before the fields are cleared.
+document.getElementById('dataForm').addEventListener('reset', () => setTimeout(toggleWithdrawnReason));
+
 document.getElementById('resetBtn').addEventListener('click', () => {
   setParentEntryUI('');
   selectedSources = [];

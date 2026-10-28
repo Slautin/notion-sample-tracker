@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING
+from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, STATUS_WITHDRAWN
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,8 @@ TRACKER_SCHEMA: dict[str, tuple[PropertyRequirement, ...]] = {
         PropertyRequirement("Synthesis Details", "rich_text"),
         PropertyRequirement("Processing", "multi_select"),
         PropertyRequirement("Processing Details", "rich_text"),
-        PropertyRequirement("Status", "select"),
+        PropertyRequirement("Status", "select", (STATUS_WITHDRAWN,)),
+        PropertyRequirement("Withdrawn Reason", "rich_text"),
         PropertyRequirement("Parent Sample", "relation"),
         PropertyRequirement("Source", "relation"),
         PropertyRequirement("QRCode", "files"),
@@ -52,6 +53,8 @@ TRACKER_SCHEMA: dict[str, tuple[PropertyRequirement, ...]] = {
         PropertyRequirement("Sample", "relation"),
         PropertyRequirement("Related Results", "relation"),
         PropertyRequirement("Source", "relation"),
+        PropertyRequirement("Status", "select", ("active", STATUS_WITHDRAWN)),
+        PropertyRequirement("Withdrawn Reason", "rich_text"),
         PropertyRequirement("QRCode", "files"),
         PropertyRequirement("Submission ID", "rich_text"),
         PropertyRequirement("Archive Status", "select", ARCHIVE_STATUS_OPTIONS),

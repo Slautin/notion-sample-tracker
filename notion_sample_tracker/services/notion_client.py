@@ -102,7 +102,16 @@ class NotionRepository:
             properties["Link"] = {"url": form.link}
         if "Source" in field_names:
             properties["Source"] = {"relation": self._source_relations(form.sources)}
+        if "Status" in field_names:
+            properties["Status"] = {"select": {"name": form.status}}
+        if "Withdrawn Reason" in field_names:
+            properties["Withdrawn Reason"] = self._rich_text(form.withdrawn_reason)
         return self.client.pages.update(page_id=page_id, properties=properties)
+
+    def missing_properties(self, database_id: str, names: list[str]) -> list[str]:
+        """The fields among `names` that the Notion database does not have (yet)."""
+        properties = self._retrieve_collection(database_id).get("properties", {})
+        return [name for name in names if name not in properties]
 
     def sample_page_by_submission(self, submission_id: str) -> dict[str, Any] | None:
         return self._find_by_rich_text(self.samples_db, "Submission ID", submission_id)
@@ -342,6 +351,8 @@ class NotionRepository:
             properties["Processing Details"] = self._rich_text(form.processing_details)
         if "Status" in field_names:
             properties["Status"] = {"select": {"name": form.status}} if form.status else {"select": None}
+        if "Withdrawn Reason" in field_names:
+            properties["Withdrawn Reason"] = self._rich_text(form.withdrawn_reason)
         if "Source" in field_names:
             properties["Source"] = {"relation": self._source_relations(form.sources)}
         return properties
@@ -376,6 +387,8 @@ class NotionRepository:
             properties["Related Results"] = {"relation": [{"id": related_result_id}]}
         if source_relations:
             properties["Source"] = {"relation": source_relations}
+        if form.status:
+            properties["Status"] = {"select": {"name": form.status}}
         return properties
 
     def _parse_sample_formula(self, form: SampleForm) -> ParsedFormula | None:

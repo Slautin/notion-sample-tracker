@@ -835,7 +835,15 @@
                         <option value="in work">In Work</option>
                         <option value="waiting">Waiting</option>
                         <option value="archived">Archived</option>
+                        <option value="withdrawn">Withdrawn</option>
                     </select>
+                    <div id="withdrawnReasonSection" class="conditional-section" style="display:none;">
+                        <div class="form-group">
+                            <label for="withdrawn_reason">5.1 Reason for withdrawal <span class="required">*</span></label>
+                            <textarea id="withdrawn_reason" name="withdrawn_reason" placeholder="For example: used up, contaminated, entered by mistake"></textarea>
+                            <div class="file-info">Only an existing sample can be withdrawn: enter its name. Nothing is deleted; its records and files are kept.</div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Q6 upgraded -->
@@ -945,6 +953,16 @@
         // =========================
         // Sample type toggle
         // =========================
+        // Withdrawn needs a reason; the box shows only then.
+        function toggleWithdrawnReason() {
+            const withdrawn = document.getElementById('status').value === 'withdrawn';
+            document.getElementById('withdrawnReasonSection').style.display = withdrawn ? 'block' : 'none';
+            document.getElementById('withdrawn_reason').required = withdrawn;
+        }
+        document.getElementById('status').addEventListener('change', toggleWithdrawnReason);
+        // A reset event fires before the fields are cleared.
+        document.getElementById('sampleForm').addEventListener('reset', () => setTimeout(toggleWithdrawnReason));
+
         async function toggleSampleType() {
             const sampleType = document.getElementById('sample_type').value;
             const rootFields = document.getElementById('rootSampleFields');
@@ -1670,6 +1688,7 @@
                     resetSubmissionId();
 
                     toggleSampleType();
+                    toggleWithdrawnReason();
 
                     // Files can't be restored from JSON in browser
                     clearAllPhotos();

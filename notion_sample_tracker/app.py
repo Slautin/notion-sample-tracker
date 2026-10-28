@@ -11,7 +11,17 @@ from typing import Any, Callable
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 
 from notion_sample_tracker.access import install_access_control
-from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, PersonRef, ResultForm, SampleForm, now_iso
+from notion_sample_tracker.models import (
+    ARCHIVE_COMPLETE,
+    ARCHIVE_FAILED,
+    ARCHIVE_PENDING,
+    STATUS_WITHDRAWN,
+    BacklogEvent,
+    PersonRef,
+    ResultForm,
+    SampleForm,
+    now_iso,
+)
 from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, safe_path_segment, safe_upload_filename
 from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
@@ -286,6 +296,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         try:
             form = SampleForm.from_form(request.form)
             _validate_sample_form(form, notion, allow_existing_name=True)
+            _check_status(form, notion, "sample")
             duplicate = _sample_duplicate_info(form, notion)
             source_updates = notion.source_detail_changes(form.sources)
             if duplicate:
@@ -300,6 +311,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             form = ResultForm.from_form(request.form)
             duplicate = _result_duplicate_info(form, notion)
             _validate_result_raw(_form_payload(request.form), notion, preflight=True, amending=duplicate is not None)
+            _check_status(form, notion, "data entry")
             source_updates = notion.source_detail_changes(form.sources)
             if duplicate:
                 return jsonify({**_duplicate_result_response(duplicate), "source_updates": source_updates}), 409
@@ -316,6 +328,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             amend_existing = _truthy(request.form.get("amend_existing"))
             existing_sample_id = str(request.form.get("existing_sample_id") or "").strip()
             _validate_sample_form(form, notion, allow_existing_name=True)
+            _check_status(form, notion, "sample")
             duplicate = _sample_duplicate_info(form, notion)
             if duplicate:
                 if not amend_existing:
@@ -402,6 +415,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             form = ResultForm.from_form(request.form)
             duplicate = _result_duplicate_info(form, notion)
             _validate_result_raw(raw_form, notion, preflight=False, stored_file_check=stored_file_check, amending=duplicate is not None)
+            _check_status(form, notion, "data entry")
         except Exception as exc:
             app_log("result_submission_failed", stage="form_parse", error=str(exc), form=raw_form)
             backlog.append(BacklogEvent(action="create", entity="result", payload=raw_form, status="failed", error=f"form_parse: {exc}"))
@@ -900,6 +914,31 @@ def _submit_result_amendment(
     )
 
 
+def _check_status(form: SampleForm | ResultForm, notion: NotionRepository, kind: str) -> None:
+    """Rules for Status withdrawn, checked before anything is uploaded or written.
+
+    Only an existing record can be withdrawn, and only with a reason. Status and Withdrawn Reason are fields
+    the lab adds to the Notion databases; a clear message beats a Notion error if one is missing.
+    """
+    is_sample = kind == "sample"
+    needed = ["Status"] if form.status and not is_sample else []  # Samples always had Status
+    if form.status == STATUS_WITHDRAWN:
+        if not form.withdrawn_reason:
+            raise ValueError("Please give a reason for withdrawing this record.")
+        if not (notion.sample_exists if is_sample else notion.result_exists)(form.name):
+            raise ValueError(
+                f"Only an existing {kind} can be withdrawn. Submit it first; to withdraw it later, submit its name again with Status withdrawn."
+            )
+        needed.append("Withdrawn Reason")
+    if not needed:
+        return
+    database_id, label = (notion.samples_db, "Samples") if is_sample else (notion.results_db, "Results")
+    missing = notion.missing_properties(database_id, needed)
+    if missing:
+        fields = " and ".join(f"'{name}'" for name in missing)
+        raise ValueError(f"The {label} database in Notion has no {fields} field yet. Add it in Notion first (see the README).")
+
+
 def _apply_source_updates(sources: list[PersonRef], notion: NotionRepository, storage: Storage, confirmed: bool) -> list[dict[str, str]]:
     """Update existing Sources' email and affiliation as entered in the form, once the person submitting confirmed it.
 
@@ -985,6 +1024,8 @@ def _result_field_changes(form: ResultForm, page: dict[str, Any], relations: dic
         ("Upload Method", form.upload_method, _page_select(page, "Upload Method"), "optional_text"),
         ("Link", form.link, _page_url(page, "Link"), "optional_exact"),
         ("Source", [person.name for person in form.sources], [item["name"] for item in relations.get("Source", [])], "set"),
+        ("Status", form.status, _page_select(page, "Status"), "optional_text"),
+        ("Withdrawn Reason", form.withdrawn_reason, _page_text(page, "Withdrawn Reason"), "optional_text"),
     ]
     return [
         {"field": field, "old": old_value, "new": new_value}
@@ -1058,6 +1099,7 @@ def _sample_field_changes(
         ("Processing", form.processing, _page_multi_select(page, "Processing"), "set"),
         ("Processing Details", form.processing_details, _page_text(page, "Processing Details"), "optional_text"),
         ("Status", form.status, _page_select(page, "Status"), "optional_text"),
+        ("Withdrawn Reason", form.withdrawn_reason, _page_text(page, "Withdrawn Reason"), "optional_text"),
     ]
     if source_names is not None:
         comparisons.append(("Source", [person.name for person in form.sources], source_names, "set"))
@@ -1278,6 +1320,7 @@ def _sample_receipt(
         ["Processing", form.processing],
         ["Processing Details", form.processing_details],
         ["Status", form.status],
+        *([["Withdrawn Reason", form.withdrawn_reason]] if form.withdrawn_reason else []),
         ["Submission ID", form.submission_id],
         ["Notion URL", page.get("url", "")],
     ]
@@ -1307,6 +1350,8 @@ def _result_receipt(
             ["Related Result", form.related_result_id],
             ["Characterisation", form.characterization],
             ["Link", form.link],
+            *([["Status", form.status]] if form.status else []),
+            *([["Withdrawn Reason", form.withdrawn_reason]] if form.withdrawn_reason else []),
             ["Submission ID", form.submission_id],
             ["Notion URL", page.get("url", "")],
             *(extra_rows or []),

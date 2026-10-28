@@ -11,6 +11,15 @@ ARCHIVE_PENDING = "Pending archive"
 ARCHIVE_COMPLETE = "Archive complete"
 ARCHIVE_FAILED = "Failed archive"
 
+# The Status that marks a sample or data entry as withdrawn. Records are withdrawn through an amendment,
+# with a reason, never deleted.
+STATUS_WITHDRAWN = "withdrawn"
+
+
+def withdrawn_reason_from_form(form: Any, status: str) -> str:
+    """The reason given for withdrawing; ignored unless the Status is withdrawn."""
+    return (form.get("withdrawn_reason") or "").strip() if status == STATUS_WITHDRAWN else ""
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -91,6 +100,7 @@ class SampleForm:
     status: str = ""
     sources: list[PersonRef] = field(default_factory=list)
     submission_id: str = field(default_factory=new_submission_id)
+    withdrawn_reason: str = ""
 
     @classmethod
     def from_form(cls, form: Any) -> "SampleForm":
@@ -115,6 +125,7 @@ class SampleForm:
             status=form.get("status", "").strip(),
             sources=sources,
             submission_id=submission_id_from_form(form),
+            withdrawn_reason=withdrawn_reason_from_form(form, form.get("status", "").strip()),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,6 +145,8 @@ class ResultForm:
     related_result_id: str = ""
     sources: list[PersonRef] = field(default_factory=list)
     submission_id: str = field(default_factory=new_submission_id)
+    status: str = ""
+    withdrawn_reason: str = ""
 
     @classmethod
     def from_form(cls, form: Any) -> "ResultForm":
@@ -166,6 +179,8 @@ class ResultForm:
             related_result_id=related_result_id,
             sources=sources,
             submission_id=submission_id_from_form(form),
+            status=(form.get("status") or "").strip(),
+            withdrawn_reason=withdrawn_reason_from_form(form, (form.get("status") or "").strip()),
         )
 
     def to_dict(self) -> dict[str, Any]:
