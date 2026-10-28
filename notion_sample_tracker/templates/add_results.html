@@ -44,6 +44,17 @@
       opacity: 0.95;
     }
 
+    .home-link {
+      display: inline-block;
+      margin-bottom: 6px;
+      color: white;
+      font-size: 14px;
+      text-decoration: none;
+      opacity: 0.9;
+    }
+
+    .home-link:hover { opacity: 1; text-decoration: underline; }
+
     .main-content {
       max-width: 1200px;
       margin: 40px auto;
@@ -515,6 +526,7 @@
 <body>
   <div class="header">
     <div class="header-content">
+      <a class="home-link" href="{{ url_for('index') }}">← Home</a>
       <h1>Center for Advanced Materials & Manufacturing</h1>
       <p>Data Management</p>
     </div>

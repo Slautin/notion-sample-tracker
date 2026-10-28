@@ -33,6 +33,9 @@ def _set_required(monkeypatch):
         "ACCESS_PASSWORD",
         "ACCESS_USERNAME",
         "ACCESS_BEHIND_AUTH_PROXY",
+        "NOTION_SAMPLES_URL",
+        "NOTION_RESULTS_URL",
+        "NOTION_SOURCES_URL",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -369,3 +372,38 @@ def test_the_address_rule_does_not_break_existing_onedrive_deployments(monkeypat
     monkeypatch.setenv("PUBLIC_BASE_URL", YOUR_NOTION_PAGE)
 
     assert Settings.from_env().storage_backend == "onedrive"  # there it is only shown on the status page
+
+
+# --- start-page links to the Notion databases ---
+
+
+def test_notion_database_links_are_read_from_the_environment(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("NOTION_SAMPLES_URL", "https://www.notion.so/camm/Samples")
+    monkeypatch.setenv("NOTION_RESULTS_URL", "https://www.notion.so/camm/Results?v=1")
+    monkeypatch.setenv("NOTION_SOURCES_URL", "https://www.notion.so/camm/People")
+
+    settings = Settings.from_env()
+
+    assert (settings.notion_samples_url, settings.notion_results_url, settings.notion_sources_url) == (
+        "https://www.notion.so/camm/Samples",
+        "https://www.notion.so/camm/Results?v=1",
+        "https://www.notion.so/camm/People",
+    )
+
+
+def test_notion_database_links_are_optional(monkeypatch):
+    _set_required(monkeypatch)
+
+    settings = Settings.from_env()
+
+    assert (settings.notion_samples_url, settings.notion_results_url, settings.notion_sources_url) == ("", "", "")
+
+
+@pytest.mark.parametrize("name", ["NOTION_SAMPLES_URL", "NOTION_RESULTS_URL", "NOTION_SOURCES_URL"])
+def test_a_notion_database_link_without_https_is_refused(monkeypatch, name):
+    _set_required(monkeypatch)
+    monkeypatch.setenv(name, "www.notion.so/camm/Samples")
+
+    with pytest.raises(RuntimeError, match=f"{name} must be a full link"):
+        Settings.from_env()

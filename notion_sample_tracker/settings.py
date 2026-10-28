@@ -149,6 +149,9 @@ class Settings:
     access_password: str = ""
     access_username: str = "lab"
     access_behind_auth_proxy: bool = False
+    notion_samples_url: str = ""
+    notion_results_url: str = ""
+    notion_sources_url: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -200,6 +203,9 @@ class Settings:
             access_password=_optional("ACCESS_PASSWORD"),
             access_username=_optional("ACCESS_USERNAME", "lab"),
             access_behind_auth_proxy=_bool("ACCESS_BEHIND_AUTH_PROXY", False),
+            notion_samples_url=_optional("NOTION_SAMPLES_URL"),
+            notion_results_url=_optional("NOTION_RESULTS_URL"),
+            notion_sources_url=_optional("NOTION_SOURCES_URL"),
         )
         settings.validate()
         return settings
@@ -237,11 +243,24 @@ class Settings:
             raise RuntimeError("ALLOWED_UPLOAD_EXTENSIONS must contain at least one extension.")
         if self.storage_backend not in STORAGE_BACKENDS:
             raise RuntimeError("STORAGE_BACKEND must be onedrive or local.")
+        self._validate_notion_links()
         self._validate_access()
         if self.storage_backend == "local":
             self._validate_local_storage()
         else:
             self._validate_onedrive()
+
+    def _validate_notion_links(self) -> None:
+        # Start-page buttons. Without a scheme a browser would treat the value as a path on this app.
+        for name, value in (
+            ("NOTION_SAMPLES_URL", self.notion_samples_url),
+            ("NOTION_RESULTS_URL", self.notion_results_url),
+            ("NOTION_SOURCES_URL", self.notion_sources_url),
+        ):
+            if value and not value.startswith(("https://", "http://")):
+                raise RuntimeError(
+                    f"{name} must be a full link starting with https:// (in Notion: open the database, then Copy link)."
+                )
 
     def _validate_access(self) -> None:
         if not self.access_password:

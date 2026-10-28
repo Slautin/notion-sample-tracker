@@ -96,10 +96,17 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
 
     @app.get("/")
     def index():
-        notion_home_url = _notion_home_url(settings)
-        if notion_home_url:
-            return redirect(notion_home_url)
-        return render_template("index.html")
+        # The start page; Notion opens only from the database buttons (and the optional workspace link).
+        notion_links = [
+            (label, url)
+            for label, url in (
+                ("Samples", settings.notion_samples_url),
+                ("Results", settings.notion_results_url),
+                ("Sources", settings.notion_sources_url),
+            )
+            if url
+        ]
+        return render_template("home.html", notion_links=notion_links, notion_home_url=_notion_home_url(settings))
 
     @app.get("/add_sample")
     def add_sample():
