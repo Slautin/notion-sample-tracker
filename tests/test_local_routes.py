@@ -542,3 +542,13 @@ def test_with_onedrive_storage_the_local_routes_do_not_exist_and_the_upload_sess
     assert response.get_json()["onedrive_path"] == "samples/PbTiO3/PTO54/results/run_1/a.csv"
     assert 'const STORAGE_BACKEND = "onedrive";' in client.get("/results/new").get_data(as_text=True)
     assert not (tmp_path / "files").exists()  # nothing is created on disk for the OneDrive backend
+
+
+def test_startup_logs_where_file_links_will_point(tmp_path, notion_state, capsys):
+    _client(tmp_path)
+
+    output = capsys.readouterr().out
+
+    assert '"event": "local_storage_ready"' in output
+    assert f'"public_address": "{PUBLIC}"' in output
+    assert str(tmp_path / "files") in output

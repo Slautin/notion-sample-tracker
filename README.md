@@ -170,7 +170,7 @@ How it works:
 
 - Samples: `record.json`, the QR code and the photos are written under `STORAGE_ROOT/samples/...`.
 - Result files: the browser sends the file in `UPLOAD_CHUNK_MB` pieces. The app appends them to a staging file in `STORAGE_ROOT/.uploads/` and moves it into `.../results/<entry>/` when the last piece has arrived. An interrupted upload resumes where it stopped. A name that already exists gets `-1`, `-2`, ... appended instead of being overwritten.
-- The link saved in the Notion `Link` field is `PUBLIC_BASE_URL/files/<path>`, served as a download. The app checks that the link points to a stored file before saving it, so a typed-in address is rejected. Keep `PUBLIC_BASE_URL` stable: changing it breaks links already stored in Notion.
+- The link saved in the Notion `Link` field is `PUBLIC_BASE_URL/files/<path>`, served as a download. The app checks that the link points to a stored file before saving it, so a typed-in address is rejected. `PUBLIC_BASE_URL` must be just this app's own address, for example `https://your-app.up.railway.app`, never a Notion page (that belongs in `NOTION_HOME_URL`). The app refuses to start if it is a Notion address or has a path, `?query` or `#fragment`. Keep it stable: changing it breaks links already stored in Notion.
 - Names that start with a dot (the staging area, temporary files) are never served, and symbolic links inside the storage root are refused.
 - Put `STORAGE_ROOT` on a local disk. Upload locking uses `flock`, which is not reliable on some network file systems (NFS, SMB).
 

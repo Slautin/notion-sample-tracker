@@ -314,3 +314,58 @@ def test_local_storage_limits_are_validated(monkeypatch, name, value, message):
 
     with pytest.raises(RuntimeError, match=message):
         Settings.from_env()
+
+
+# --- PUBLIC_BASE_URL must be the app's own address when files are served by the app ---
+
+YOUR_NOTION_PAGE = "https://www.notion.so/camm-sample-tracking/Sample-Tracking-2866e75c45cb80c099f1e040193b9ed1?source=copy_link"
+
+
+@pytest.mark.parametrize(
+    "address, reason",
+    [
+        (YOUR_NOTION_PAGE, "Notion address"),
+        ("https://www.notion.so", "Notion address"),
+        ("https://camm.notion.site/Sample-Tracking", "Notion address"),
+        ("https://app.notion.com/p/abc", "Notion address"),
+        ("https://tracker.example.edu/tracker", "no path"),
+        ("https://tracker.example.edu/?a=1", "no path"),
+        ("https://tracker.example.edu#top", "no path"),
+        ("https://user:secret@tracker.example.edu", "user name or password"),
+        ("https://:8443", "no host name"),
+    ],
+)
+def test_local_storage_refuses_an_address_that_is_not_the_apps_own(monkeypatch, address, reason):
+    _set_local(monkeypatch)
+    monkeypatch.setenv("PUBLIC_BASE_URL", address)
+
+    with pytest.raises(RuntimeError, match="PUBLIC_BASE_URL must be the address of this app") as caught:
+        Settings.from_env()
+
+    assert reason in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "address, expected",
+    [
+        ("https://sampletracker-production.up.railway.app", "https://sampletracker-production.up.railway.app"),
+        ("https://tracker.example.edu/", "https://tracker.example.edu"),
+        ("https://tracker.example.edu:8443", "https://tracker.example.edu:8443"),
+        ("http://localhost:8000", "http://localhost:8000"),
+        ("http://127.0.0.1:8765", "http://127.0.0.1:8765"),
+        ("https://notion.so.evil.example", "https://notion.so.evil.example"),  # not a Notion host, so not refused here
+        ("https://mynotion.so", "https://mynotion.so"),
+    ],
+)
+def test_local_storage_accepts_a_plain_app_address(monkeypatch, address, expected):
+    _set_local(monkeypatch)
+    monkeypatch.setenv("PUBLIC_BASE_URL", address)
+
+    assert Settings.from_env().public_base_url == expected
+
+
+def test_the_address_rule_does_not_break_existing_onedrive_deployments(monkeypatch):
+    _set_production(monkeypatch)
+    monkeypatch.setenv("PUBLIC_BASE_URL", YOUR_NOTION_PAGE)
+
+    assert Settings.from_env().storage_backend == "onedrive"  # there it is only shown on the status page

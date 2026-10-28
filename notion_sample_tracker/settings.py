@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -88,6 +89,24 @@ def _backlog_dir(app_env: str) -> Path:
     if not path.is_absolute() and app_env in PRODUCTION_ENVS:
         return Path("/data") / path
     return path
+
+
+NOTION_HOST_SUFFIXES = ("notion.so", "notion.site", "notion.com")
+
+
+def _public_address_problem(url: str) -> str:
+    """Why `url` cannot be the address people use to reach this app ("" if it can)."""
+    parts = urlparse(url)
+    host = (parts.hostname or "").lower()
+    if not host:
+        return "it has no host name"
+    if any(host == suffix or host.endswith("." + suffix) for suffix in NOTION_HOST_SUFFIXES):
+        return f"it is a Notion address ({host}), so file links saved in Notion would open Notion pages"
+    if parts.username or parts.password:
+        return "it must not contain a user name or password"
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        return "it must be only the address of the app, with no path, ?query or #fragment"
+    return ""
 
 
 def _storage_root(app_env: str) -> Path:
@@ -238,6 +257,12 @@ class Settings:
             )
 
     def _validate_local_storage(self) -> None:
+        # Links to stored files are PUBLIC_BASE_URL + /files/..., so it must be the app's own address.
+        problem = _public_address_problem(self.public_base_url)
+        if problem:
+            raise RuntimeError(
+                f"PUBLIC_BASE_URL must be the address of this app, for example https://your-app.up.railway.app: {problem}."
+            )
         if self.max_result_file_mb <= 0:
             raise RuntimeError("MAX_RESULT_FILE_MB must be greater than zero.")
         if self.upload_chunk_mb <= 0:

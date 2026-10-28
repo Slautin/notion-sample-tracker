@@ -62,6 +62,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             min_free_bytes=settings.storage_min_free_mb * MB,
         )
         local_storage.check_writable()
+        app_log("local_storage_ready", storage_root=str(settings.storage_root), public_address=settings.public_base_url)
         uploads = ResumableUploads(
             local_storage,
             max_file_bytes=settings.max_result_file_mb * MB,
