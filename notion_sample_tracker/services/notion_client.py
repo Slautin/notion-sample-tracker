@@ -83,6 +83,27 @@ class NotionRepository:
     def result_page_by_name(self, name: str) -> dict[str, Any] | None:
         return self._find_by_any_title(self.results_db, name)
 
+    def resolve_result_page_id(self, value: str) -> str:
+        """Page ID for a data entry given by name or ID. Raises ValueError if no such entry exists."""
+        return self._resolve_page_id(self.results_db, value)
+
+    def update_result_fields(self, page_id: str, form: ResultForm, field_names: list[str]) -> dict[str, Any]:
+        """Amend the named fields of a data entry from `form`, and record the amendment's submission ID."""
+        properties: dict[str, Any] = {"Submission ID": self._rich_text(form.submission_id)}
+        if "Data Type" in field_names:
+            properties["Data Type"] = {"select": {"name": form.data_type}}
+        if "Brief Description" in field_names:
+            properties["Brief Description"] = self._rich_text(form.description)
+        if "Characterisation" in field_names:
+            properties[self._characterisation_property()] = self._multi_select(form.characterization)
+        if "Upload Method" in field_names:
+            properties["Upload Method"] = {"select": {"name": form.upload_method}}
+        if "Link" in field_names:
+            properties["Link"] = {"url": form.link}
+        if "Source" in field_names:
+            properties["Source"] = {"relation": self._source_relations(form.sources)}
+        return self.client.pages.update(page_id=page_id, properties=properties)
+
     def sample_page_by_submission(self, submission_id: str) -> dict[str, Any] | None:
         return self._find_by_rich_text(self.samples_db, "Submission ID", submission_id)
 
@@ -348,8 +369,7 @@ class NotionRepository:
         if form.description:
             properties["Brief Description"] = self._rich_text(form.description)
         if form.characterization:
-            char_property = self._first_existing_property(self.results_db, ["Characterisation", "Characterization"]) or "Characterization"
-            properties[char_property] = self._multi_select(form.characterization)
+            properties[self._characterisation_property()] = self._multi_select(form.characterization)
         if form.link:
             properties["Link"] = {"url": form.link}
         if related_result_id:
@@ -436,6 +456,10 @@ class NotionRepository:
         if not prop or prop.get("type") != property_type:
             return []
         return [item["name"] for item in prop[property_type].get("options", [])]
+
+    def _characterisation_property(self) -> str:
+        """The Results field for characterisation methods; databases spell it either way."""
+        return self._first_existing_property(self.results_db, ["Characterisation", "Characterization"]) or "Characterization"
 
     def _first_existing_property(self, database_id: str, names: list[str]) -> str:
         database = self._retrieve_collection(database_id)

@@ -9,11 +9,14 @@ import json
 import pytest
 
 import notion_sample_tracker.app as app_module
+from notion_sample_tracker.schema_contract import TRACKER_SCHEMA
+from notion_sample_tracker.services.local_storage import LocalStorage
 from notion_sample_tracker.services.notion_client import NotionRepository
 from notion_sample_tracker.settings import Settings
 
 
 TITLES = {"samples-db": "Name", "results-db": "Name", "people-db": "Person"}
+DATABASES = {"samples-db": "Samples", "results-db": "Results", "people-db": "People"}
 SOURCES = json.dumps([{"name": "Ada Lovelace", "email": "ada@utk.edu", "affiliation": "UTK"}])
 
 
@@ -46,6 +49,8 @@ class FakeNotionApi:
         self.store: dict[str, dict] = {}
         self.on_update = None  # called with (page_id, properties) before an update is applied
         self.unreadable: set[str] = set()
+        # Fields a test takes out of a database, as if nobody had added them in Notion yet.
+        self.missing_properties: dict[str, set[str]] = {database_id: set() for database_id in DATABASES}
         self.pages = self
         self.data_sources = self
 
@@ -71,7 +76,13 @@ class FakeNotionApi:
 
     def retrieve(self, page_id=None, data_source_id=None):
         if data_source_id is not None:
-            return {"properties": {TITLES[data_source_id]: {"type": "title"}}}
+            # The database as the app's schema contract describes it.
+            properties = {
+                requirement.name: {"type": requirement.notion_type, requirement.notion_type: {"options": [{"name": option} for option in requirement.options]}}
+                for requirement in TRACKER_SCHEMA[DATABASES[data_source_id]]
+                if requirement.name not in self.missing_properties[data_source_id]
+            }
+            return {"properties": properties}
         if page_id in self.unreadable:
             raise RuntimeError("Could not find page")
         return copy.deepcopy(self.store[page_id])
@@ -194,3 +205,18 @@ def submit_result(client, name="XRD run 1", content=b"a,b\n1,2\n"):
 
 def read_record(tmp_path, relative):
     return json.loads((tmp_path / "files" / relative).read_text())
+
+
+def failing_json_writes(monkeypatch, path_suffix, from_call=1):
+    """Make LocalStorage.upload_json fail for paths ending in `path_suffix`, from the `from_call`-th such write on."""
+    real_upload_json = LocalStorage.upload_json
+    calls = []
+
+    def upload_json(self, relative_path, payload):
+        if relative_path.endswith(path_suffix):
+            calls.append(relative_path)
+            if len(calls) >= from_call:
+                raise OSError("disk went away")
+        return real_upload_json(self, relative_path, payload)
+
+    monkeypatch.setattr(LocalStorage, "upload_json", upload_json)

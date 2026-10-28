@@ -120,6 +120,20 @@ Opening the app's address shows a start page in the same style as the forms. **A
 - Set the database links with `NOTION_SAMPLES_URL`, `NOTION_RESULTS_URL` and `NOTION_SOURCES_URL`. In Notion, open the database view you want people to see and use Copy link. A button without a link is hidden; a link without `https://` is refused at startup.
 - `NOTION_HOME_URL` (or the older `NOTION_PAGE`) adds an "Open the Notion workspace" link. The start page no longer redirects to Notion.
 
+## Amending records
+
+Records are changed through the forms, never deleted. Submitting the name of an existing sample or data entry amends it:
+
+1. Before anything is uploaded, the form lists the fields that would change and asks you to confirm. If you decline, nothing changes and you can pick another name.
+2. Only the fields that differ are written to Notion. A field left empty keeps its current value, including multi-choice fields such as Synthesis, Processing and Characterisation.
+3. The server keeps every version: `revisions/<id>/record.json` with the changed fields, and `current/record.json` with the whole page after the amendment. Earlier records and files are never replaced.
+
+For a data entry:
+
+- The parent (sample or dataset) cannot change, because the entry's files live in the parent's folder. To file the data elsewhere, use a new name.
+- Leave Data empty to keep the current file or link. A new file is stored next to the old one (`scan.csv`, `scan-1.csv`, ...) and `Link` points to it; the old file stays on the server.
+- Choosing Sources replaces the entry's Sources; leaving them empty keeps them.
+
 ## Storage backends
 
 `STORAGE_BACKEND` chooses where archived files go. Notion behaves the same with either.
@@ -144,7 +158,7 @@ Each submission saves a `record.json` next to its files, so the server holds a r
 - `relations`: the name of every linked record (`Source`, `Parent Sample`, `Sample`, `Related Results`), so the record can be read without Notion. If a linked page cannot be read, its name is left empty and `relations_error` says why.
 - `kind` (`sample`, `result` or `source`), `captured_at`, and what was submitted (`form`, `raw_form`, the files and QR code; for an amendment also the revision ID and the changed fields).
 
-Samples are saved at `samples/<composition>/<name>/record.json`. An amendment writes `revisions/<id>/record.json` and `current/record.json`, both with the page after the amendment. Results are saved at `.../results/<entry>/record.json`. Every Source a submission links to is saved as `sources/<name>/record.json` and refreshed whenever a later submission links to it.
+Samples are saved at `samples/<composition>/<name>/record.json`, results at `.../results/<entry>/record.json`. An amendment of either writes `revisions/<id>/record.json` and `current/record.json` in that folder, both with the page after the amendment. Every Source a submission links to is saved as `sources/<name>/record.json` and refreshed whenever a later submission links to it.
 
 The record is written once before the archive status is set, so a record exists before Notion can say `Archive complete`, and again afterwards from the page Notion returned. If the second write fails, the page is marked `Failed archive`.
 

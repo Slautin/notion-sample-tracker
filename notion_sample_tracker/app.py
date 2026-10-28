@@ -296,7 +296,11 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     @app.post("/api/validate-result")
     def api_validate_result():
         try:
-            _validate_result_raw(_form_payload(request.form), notion, preflight=True)
+            form = ResultForm.from_form(request.form)
+            duplicate = _result_duplicate_info(form, notion)
+            _validate_result_raw(_form_payload(request.form), notion, preflight=True, amending=duplicate is not None)
+            if duplicate:
+                return jsonify(_duplicate_result_response(duplicate)), 409
             return jsonify({"success": True})
         except Exception as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
@@ -391,12 +395,26 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
         artifact_errors: list[str] = []
         onedrive_paths: list[str] = []
         try:
-            _validate_result_raw(raw_form, notion, preflight=False, stored_file_check=stored_file_check)
             form = ResultForm.from_form(request.form)
+            duplicate = _result_duplicate_info(form, notion)
+            _validate_result_raw(raw_form, notion, preflight=False, stored_file_check=stored_file_check, amending=duplicate is not None)
         except Exception as exc:
             app_log("result_submission_failed", stage="form_parse", error=str(exc), form=raw_form)
             backlog.append(BacklogEvent(action="create", entity="result", payload=raw_form, status="failed", error=f"form_parse: {exc}"))
             return jsonify({"success": False, "stage": "form_parse", "error": str(exc)}), 400
+        if duplicate:
+            if not _truthy(request.form.get("amend_existing")):
+                return jsonify(_duplicate_result_response(duplicate)), 409
+            try:
+                if str(request.form.get("existing_result_id") or "").strip() != duplicate["page"]["id"]:
+                    raise ValueError("Duplicate data entry confirmation did not match the existing Notion record.")
+                return _submit_result_amendment(form, raw_form, duplicate, notion, storage, backlog)
+            except Exception as exc:
+                app_log("result_amendment_failed", page_id=duplicate["page"]["id"], error=str(exc))
+                backlog.append(
+                    BacklogEvent(action="amend", entity="result", payload=form.to_dict(), notion_page_id=duplicate["page"]["id"], status="failed", error=str(exc))
+                )
+                return jsonify({"success": False, "stage": "amendment", "error": str(exc)}), 400
 
         try:
             page = notion.result_page_by_submission(form.submission_id)
@@ -799,6 +817,148 @@ def _submit_sample_amendment(
     return jsonify(response)
 
 
+def _submit_result_amendment(
+    form: ResultForm,
+    raw_form: dict[str, Any],
+    duplicate: dict[str, Any],
+    notion: NotionRepository,
+    storage: Storage,
+    backlog: JsonlBacklog,
+):
+    """Amend an existing data entry: change only the fields that differ, and keep every earlier file and record."""
+    page = duplicate["page"]
+    changes = duplicate["changes"]
+    if not changes:
+        return jsonify(
+            {
+                "success": True,
+                "no_changes": True,
+                "message": "No changes detected. Existing data entry left unchanged.",
+                "notion_page_id": page["id"],
+                "notion_page_url": page.get("url", ""),
+                "receipt": _result_receipt(form, page, record_type="Data Entry Amendment"),
+            }
+        )
+    # The parent cannot change (checked with the duplicate), so this is the folder the entry was created in.
+    result_folder = f"{_result_parent_folder(notion, form)}/results/{_safe_segment(form.name)}"
+    revision_id = _revision_id()
+    revision_prefix = f"{result_folder}/revisions/{revision_id}"
+    updated_page = notion.update_result_fields(page["id"], form, [item["field"] for item in changes])
+    try:
+        changed_record = storage.upload_json(f"{revision_prefix}/changed_fields.json", {"revision_id": revision_id, "changed_fields": changes})
+        record, (revision_record, current_record), source_paths = _archive_record(
+            notion,
+            storage,
+            [f"{revision_prefix}/record.json", f"{result_folder}/current/record.json"],
+            "result",
+            updated_page,
+            [],
+            revision_id=revision_id,
+            amended_at=datetime.now(timezone.utc).isoformat(),
+            form=form.to_dict(),
+            raw_form=raw_form,
+            notion_page_id=page["id"],
+            notion_page_url=page.get("url", ""),
+            changed_fields=changes,
+        )
+        updated_page = record["notion"]
+    except Exception as exc:
+        _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, f"archive: {exc}")
+        raise
+    backlog.append(
+        BacklogEvent(
+            action="amend",
+            entity="result",
+            payload=form.to_dict(),
+            notion_page_id=page["id"],
+            onedrive_paths=[revision_record.path, changed_record.path, current_record.path, *source_paths],
+            status="complete",
+        )
+    )
+    return jsonify(
+        {
+            "success": True,
+            "amended": True,
+            "message": "Data entry amended successfully",
+            "revision_id": revision_id,
+            "changed_fields": changes,
+            "notion_page_id": page["id"],
+            "notion_page_url": page.get("url", ""),
+            "receipt": _result_receipt(
+                form,
+                updated_page,
+                record_type="Data Entry Amendment",
+                extra_rows=[["Revision ID", revision_id], ["Changed Fields", [item["field"] for item in changes]]],
+            ),
+        }
+    )
+
+
+def _result_duplicate_info(form: ResultForm, notion: NotionRepository) -> dict[str, Any] | None:
+    """The existing data entry this form would amend and what would change; None for a new entry or a retry.
+
+    Raises ValueError if the form names a different parent: an entry's parent is fixed.
+    """
+    if not form.name:
+        return None
+    existing = notion.result_page_by_name(form.name)
+    if not existing:
+        return None
+    if form.submission_id:
+        submitted = notion.result_page_by_submission(form.submission_id)
+        if submitted and submitted.get("id") == existing.get("id"):
+            return None  # a retry of the submission that created or last amended this entry
+    relations, _, _ = notion.describe_relations(existing)
+    _check_same_result_parent(form, existing, relations, notion)
+    return {"page": existing, "changes": _result_field_changes(form, existing, relations)}
+
+
+def _duplicate_result_response(duplicate: dict[str, Any]) -> dict[str, Any]:
+    page = duplicate["page"]
+    return {
+        "success": False,
+        "duplicate": True,
+        "message": f"A data entry named '{_page_title(page)}' already exists.",
+        "existing_result": {"page_id": page["id"], "url": page.get("url", ""), "name": _page_title(page)},
+        "changes": duplicate["changes"],
+    }
+
+
+def _check_same_result_parent(form: ResultForm, page: dict[str, Any], relations: dict[str, list[dict[str, str]]], notion: NotionRepository) -> None:
+    """Refuse an amendment that names another parent. The entry's files live in its parent's folder."""
+    old_entry = _page_select(page, "Parent Entry")
+    if form.related_result_id and not form.sample_id:
+        new_kind, new_id, old_name = "dataset", _resolved_parent_id(form.related_result_id, notion.resolve_result_page_id), "Related Results"
+    else:
+        new_kind, new_id, old_name = "sample", _resolved_parent_id(form.sample_id, notion.resolve_sample_page_id), "Sample"
+    old_id = _page_relation_id(page, old_name)
+    same_kind = not old_entry or not form.parent_entry or _same_text(form.parent_entry, old_entry)
+    if same_kind and _normalize_page_id(new_id) == _normalize_page_id(old_id):
+        return
+    old_parent = next((item["name"] for item in relations.get(old_name, []) if item["name"]), old_id or "none")
+    raise ValueError(
+        f"The data entry '{form.name}' already exists under {old_entry or new_kind} '{old_parent}'. "
+        "The parent of an existing entry can't change. To file this data under another parent, use a new name."
+    )
+
+
+def _result_field_changes(form: ResultForm, page: dict[str, Any], relations: dict[str, list[dict[str, str]]]) -> list[dict[str, Any]]:
+    char_property = "Characterisation" if "Characterisation" in page.get("properties", {}) else "Characterization"
+    comparisons = [
+        ("Data Type", form.data_type, _page_select(page, "Data Type"), "optional_text"),
+        ("Brief Description", form.description, _page_text(page, "Brief Description"), "optional_text"),
+        ("Characterisation", form.characterization, _page_multi_select(page, char_property), "set"),
+        ("Upload Method", form.upload_method, _page_select(page, "Upload Method"), "optional_text"),
+        ("Link", form.link, _page_url(page, "Link"), "optional_exact"),
+        ("Source", [person.name for person in form.sources], [item["name"] for item in relations.get("Source", [])], "set"),
+    ]
+    return [
+        {"field": field, "old": old_value, "new": new_value}
+        for field, new_value, old_value, mode in comparisons
+        if _values_differ(new_value, old_value, mode)
+    ]
+
+
 def _sample_duplicate_info(form: SampleForm, notion: NotionRepository) -> dict[str, Any] | None:
     existing = notion.sample_page_by_name(form.name)
     if not existing:
@@ -807,7 +967,20 @@ def _sample_duplicate_info(form: SampleForm, notion: NotionRepository) -> dict[s
         existing_submission = notion.sample_page_by_submission(form.submission_id)
         if existing_submission and existing_submission.get("id") == existing.get("id") and _sample_submission_matches_page(form, existing_submission):
             return None
-    return {"page": existing, "changes": _sample_field_changes(form, existing, lambda value: notion.resolve_sample_page_id(value))}
+    changes = _sample_field_changes(form, existing, lambda value: notion.resolve_sample_page_id(value), composition=_stored_composition(form, notion))
+    return {"page": existing, "changes": changes}
+
+
+def _stored_composition(form: SampleForm, notion: NotionRepository) -> str:
+    """The composition as Notion stores it (normalised, e.g. PbTiO3 as TiPbO3), so re-entering it is no change."""
+    if not form.composition:
+        return ""
+    try:
+        parsed = notion.parse_sample_formula(form)
+    except Exception:
+        # An unreadable formula counts as a change; the amendment itself then reports the formula error.
+        return form.composition
+    return parsed.normalized_formula if parsed else form.composition
 
 
 def _duplicate_sample_response(duplicate: dict[str, Any]) -> dict[str, Any]:
@@ -829,10 +1002,12 @@ def _sample_field_changes(
     form: SampleForm,
     page: dict[str, Any],
     resolve_parent: Callable[[str], str] | None = None,
+    composition: str | None = None,
 ) -> list[dict[str, Any]]:
+    """What an amendment would change. `composition` is the form's formula as Notion would store it."""
     comparisons = [
         ("Sample Type", form.sample_type, _page_select(page, "Sample Type"), "text"),
-        ("Composition", form.composition, _page_text(page, "Composition"), "optional_text"),
+        ("Composition", form.composition if composition is None else composition, _page_text(page, "Composition"), "optional_text"),
         ("Synthesis", form.synthesis, _page_multi_select(page, "Synthesis"), "set"),
         ("Synthesis Details", form.synthesis_details, _page_text(page, "Synthesis Details"), "optional_text"),
         ("Processing", form.processing, _page_multi_select(page, "Processing"), "set"),
@@ -851,10 +1026,15 @@ def _sample_field_changes(
 
 
 def _values_differ(new_value: Any, old_value: Any, mode: str) -> bool:
+    """Whether an amendment changes a field. A field left empty in the form keeps its value in Notion."""
     if mode == "set":
-        return not _same_set(list(new_value or []), list(old_value or []))
-    if mode in {"optional_text", "page_id"} and not str(new_value or "").strip():
+        new_items = [item for item in new_value or [] if str(item).strip()]
+        return bool(new_items) and not _same_set(new_items, list(old_value or []))
+    if mode in {"optional_text", "optional_exact", "page_id"} and not str(new_value or "").strip():
         return False
+    if mode == "optional_exact":
+        # Links: case matters in a URL's path.
+        return str(new_value).strip() != str(old_value or "").strip()
     if mode == "page_id":
         return _normalize_page_id(new_value) != _normalize_page_id(old_value)
     return not _same_text(str(new_value or ""), str(old_value or ""))
@@ -969,6 +1149,11 @@ def _page_multi_select(page: dict[str, Any], property_name: str) -> list[str]:
     return []
 
 
+def _page_url(page: dict[str, Any], property_name: str) -> str:
+    prop = page.get("properties", {}).get(property_name, {})
+    return prop.get("url") or "" if prop.get("type") == "url" else ""
+
+
 def _page_relation_id(page: dict[str, Any], property_name: str) -> str:
     prop = page.get("properties", {}).get(property_name, {})
     relation = prop.get("relation", []) if prop.get("type") == "relation" else []
@@ -980,7 +1165,9 @@ def _validate_result_raw(
     notion: NotionRepository,
     preflight: bool,
     stored_file_check: Callable[[str], bool] | None = None,
+    amending: bool = False,
 ) -> None:
+    """Required fields of a data entry. An amendment may leave the data empty to keep the entry's file or link."""
     name = str(raw_form.get("name") or "").strip()
     entry_type = str(raw_form.get("entry_type") or "").strip()
     parent_entry = str(raw_form.get("parent_entry") or "").strip()
@@ -989,6 +1176,16 @@ def _validate_result_raw(
     upload_method = str(raw_form.get("data_type") or raw_form.get("upload_method") or "").strip()
     data_link = str(raw_form.get("data_link") or raw_form.get("link") or "").strip()
     onedrive_path = str(raw_form.get("onedrive_path") or "").strip()
+
+    submission_id = str(raw_form.get("submission_id") or raw_form.get("submissionId") or "").strip()
+    submitted = notion.result_page_by_submission(submission_id) if submission_id else None
+    if submitted:
+        if not _same_text(_page_title(submitted), name):
+            # Not a retry: a form left open after a submission sent its old ID with a new entry.
+            raise ValueError(
+                f"This form was already used to submit '{_page_title(submitted)}'. Reload the page to submit another data entry."
+            )
+        return  # a retry of a submission that was checked when it was first sent
 
     errors = []
     if not name:
@@ -1002,7 +1199,8 @@ def _validate_result_raw(
     elif parent_entry == "dataset" and not parent_dataset:
         errors.append("Parent Dataset is required when Parent Entry is dataset.")
     if not upload_method:
-        errors.append("Data upload method is required.")
+        if not amending:
+            errors.append("Data upload method is required.")
     elif upload_method == "link" and not data_link:
         errors.append("Link is required when Data is Link.")
     elif upload_method == "file" and not preflight:
@@ -1012,16 +1210,7 @@ def _validate_result_raw(
             errors.append("The uploaded file was not found on the server. Please upload it again.")
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
-    submission_id = str(raw_form.get("submission_id") or raw_form.get("submissionId") or "").strip()
-    submitted = notion.result_page_by_submission(submission_id) if submission_id else None
-    if submitted:
-        if not _same_text(_page_title(submitted), name):
-            # Not a retry: a form left open after a submission sent its old ID with a new entry.
-            raise ValueError(
-                f"This form was already used to submit '{_page_title(submitted)}'. Reload the page to submit another data entry."
-            )
-        return
-    if notion.result_exists(name):
+    if not amending and notion.result_exists(name):
         raise ValueError(f"A result with name '{name}' already exists. Please choose another name.")
 
 
@@ -1053,11 +1242,16 @@ def _sample_receipt(
     }
 
 
-def _result_receipt(form: ResultForm, page: dict[str, Any]) -> dict[str, Any]:
+def _result_receipt(
+    form: ResultForm,
+    page: dict[str, Any],
+    record_type: str = "Result",
+    extra_rows: list[list[Any]] | None = None,
+) -> dict[str, Any]:
     return {
-        "title": f"Result Submission - {form.name}",
+        "title": f"{record_type} - {form.name}" if record_type != "Result" else f"Result Submission - {form.name}",
         "rows": [
-            ["Record Type", "Result"],
+            ["Record Type", record_type],
             ["Name", form.name],
             ["Data Type", form.data_type],
             ["Upload Method", form.upload_method],
@@ -1068,6 +1262,7 @@ def _result_receipt(form: ResultForm, page: dict[str, Any]) -> dict[str, Any]:
             ["Link", form.link],
             ["Submission ID", form.submission_id],
             ["Notion URL", page.get("url", "")],
+            *(extra_rows or []),
         ],
     }
 

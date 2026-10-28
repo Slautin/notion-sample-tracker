@@ -10,7 +10,7 @@ import notion_sample_tracker.app as app_module
 from notion_sample_tracker import records_export
 from notion_sample_tracker.services.local_storage import LocalStorage
 
-from notion_fakes import SOURCES, api, chunked_upload, client, read_record, submit_result, submit_sample  # noqa: F401 (fixtures)
+from notion_fakes import SOURCES, api, chunked_upload, client, failing_json_writes, read_record, submit_result, submit_sample  # noqa: F401 (fixtures)
 
 
 
@@ -95,7 +95,7 @@ def test_a_record_is_on_disk_before_notion_is_told_the_archive_is_complete(tmp_p
 
 
 def test_a_failed_final_record_write_marks_the_notion_page_failed(tmp_path, api, client, monkeypatch):
-    _failing_json_writes(monkeypatch, "PTO54/record.json", from_call=2)
+    failing_json_writes(monkeypatch, "PTO54/record.json", from_call=2)
 
     response = submit_sample(client)
 
@@ -103,21 +103,6 @@ def test_a_failed_final_record_write_marks_the_notion_page_failed(tmp_path, api,
     assert api.status_of("PTO54") == "Failed archive"
     # The first record is still there, so the files are not orphaned.
     assert read_record(tmp_path, "samples/TiPbO3/PTO54/record.json")["notion"]["id"] == api.page_named("PTO54")["id"]
-
-
-def _failing_json_writes(monkeypatch, path_suffix, from_call=1):
-    """Make LocalStorage.upload_json fail for paths ending in `path_suffix`, from the `from_call`-th such write on."""
-    real_upload_json = LocalStorage.upload_json
-    calls = []
-
-    def upload_json(self, relative_path, payload):
-        if relative_path.endswith(path_suffix):
-            calls.append(relative_path)
-            if len(calls) >= from_call:
-                raise OSError("disk went away")
-        return real_upload_json(self, relative_path, payload)
-
-    monkeypatch.setattr(LocalStorage, "upload_json", upload_json)
 
 
 def test_a_sample_with_a_failed_photo_is_saved_as_failed_with_the_reason(tmp_path, api, client, monkeypatch):
@@ -141,7 +126,7 @@ def test_a_sample_with_a_failed_photo_is_saved_as_failed_with_the_reason(tmp_pat
 
 def test_a_failed_result_record_write_marks_the_notion_page_failed(tmp_path, api, client, monkeypatch):
     submit_sample(client)
-    _failing_json_writes(monkeypatch, "XRD_run_1/record.json")
+    failing_json_writes(monkeypatch, "XRD_run_1/record.json")
 
     response = submit_result(client)
 
@@ -154,7 +139,7 @@ def test_a_failed_amendment_record_write_marks_the_notion_page_failed(tmp_path, 
     submit_sample(client)
     sample = api.page_named("PTO54")
     # current/record.json is written last, after Notion was told the archive is complete.
-    _failing_json_writes(monkeypatch, "current/record.json")
+    failing_json_writes(monkeypatch, "current/record.json")
 
     response = submit_sample(client, synthesis="Sol-gel", amend_existing="true", existing_sample_id=sample["id"])
 

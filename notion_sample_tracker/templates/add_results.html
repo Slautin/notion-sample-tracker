@@ -546,7 +546,7 @@
         <div class="form-group">
           <label for="name">1. Name <span class="required">*</span></label>
           <input type="text" id="name" name="name" required placeholder="Enter data entry name">
-          <div class="file-info">Use a short unique name. This becomes the Notion title and the result folder name.</div>
+          <div class="file-info">Use a short unique name. This becomes the Notion title and the result folder name. Entering the name of an existing entry amends it: fields you leave empty keep their current values.</div>
         </div>
 
         <!-- 2) Entry type -->
@@ -637,7 +637,7 @@
             <option value="link">Link</option>
             <option value="file">File</option>
           </select>
-          <div class="file-info">Choose Link for existing URLs, or File to upload to {{ storage_label }} before the Notion entry is created.</div>
+          <div class="file-info">Choose Link for existing URLs, or File to upload to {{ storage_label }} before the Notion entry is created. When amending an entry, leave this empty to keep its current data.</div>
         </div>
 
         <!-- 6.1 Link -->
@@ -1404,9 +1404,25 @@ async function validateResultBeforeUpload(form) {
     body: new FormData(form)
   });
   const result = await response.json().catch(() => ({}));
+  if (response.status === 409 && result.duplicate) {
+    return result;  // the name belongs to an existing entry: offer to amend it
+  }
   if (!response.ok || !result.success) {
     throw new Error(result.error || 'Please fill required fields before uploading files.');
   }
+  return result;
+}
+
+function confirmEntryAmendment(duplicate, dataType) {
+  const lines = (duplicate.changes || []).map(change => `- ${change.field}`);
+  if (dataType === 'file' && !lines.includes('- Link')) {
+    lines.push('- Link (to the new file; the current file is kept)');
+  }
+  return window.confirm(
+    `A data entry named "${duplicate.existing_result?.name || 'this name'}" already exists.\n\n` +
+    `Fields that would change:\n${lines.join('\n') || '- No field changes detected'}\n\n` +
+    'Do you want to amend the existing entry? Fields you left empty keep their current values, and earlier files and records are kept.'
+  );
 }
 
 function newSubmissionId() {
@@ -1477,14 +1493,8 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
     return;
   }
 
+  // Data may stay empty only when amending an existing entry; that is known after the server check below.
   const dataType = document.getElementById('data_type').value;
-  if (!dataType) {
-    messageDiv.className = 'message error';
-    messageDiv.style.display = 'block';
-    messageDiv.textContent = '✗ Please select Data Type (Link or File).';
-    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
 
   if (dataType === 'link') {
     const link = document.getElementById('data_link').value.trim();
@@ -1497,8 +1507,34 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
     }
   }
 
+  if (dataType === 'file' && !pendingFile) {
+    messageDiv.className = 'message error';
+    messageDiv.style.display = 'block';
+    messageDiv.textContent = '✗ File is required.';
+    messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  let amendTarget = '';
   try {
-    await validateResultBeforeUpload(e.target);
+    const validation = await validateResultBeforeUpload(e.target);
+    if (validation.duplicate) {
+      if (!confirmEntryAmendment(validation, dataType)) {
+        messageDiv.className = 'message error';
+        messageDiv.style.display = 'block';
+        messageDiv.textContent = `A data entry named "${validation.existing_result?.name || 'this name'}" already exists. Change the name to create a new entry.`;
+        document.getElementById('name').focus();
+        messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      amendTarget = validation.existing_result.page_id;
+    } else if (!dataType) {
+      messageDiv.className = 'message error';
+      messageDiv.style.display = 'block';
+      messageDiv.textContent = '✗ Please select Data Type (Link or File).';
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
   } catch (err) {
     messageDiv.className = 'message error';
     messageDiv.style.display = 'block';
@@ -1509,14 +1545,6 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
 
   /* ✅ If file: upload NOW (on submit) */
   if (dataType === 'file') {
-    if (!pendingFile) {
-      messageDiv.className = 'message error';
-      messageDiv.style.display = 'block';
-      messageDiv.textContent = '✗ File is required.';
-      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-
     try {
       submitBtn.disabled = true;
       submitBtn.textContent = '⏳ Uploading…';
@@ -1553,6 +1581,10 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
   try {
     ensureSubmissionId();
     const formData = new FormData(e.target);
+    if (amendTarget) {
+      formData.append('amend_existing', 'true');
+      formData.append('existing_result_id', amendTarget);
+    }
 
     const r = await fetch('/api/submit-data', {
       method: 'POST',
@@ -1584,6 +1616,11 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       document.getElementById('onedrive_item_id').value = '';
       lastUploadSession = null;
       pendingFile = null;
+    } else if (r.status === 409 && j.duplicate) {
+      // Someone saved an entry with this name after the check above.
+      messageDiv.className = 'message error';
+      messageDiv.textContent = `✗ ${j.message} Submit again to see what would change.`;
+      messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
       messageDiv.className = 'message error';
       messageDiv.textContent = '✗ ' + (j.error || 'Submission failed');

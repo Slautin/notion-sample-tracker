@@ -66,6 +66,9 @@ def notion_state(monkeypatch):
         def result_exists(self, name):
             return False
 
+        def result_page_by_name(self, name):
+            return None
+
         def create_result(self, form):
             state.results.append(form)
             return {"id": "result-1", "url": "https://notion.example/result-1", "properties": {}}
