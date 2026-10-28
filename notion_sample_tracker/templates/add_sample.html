@@ -1421,6 +1421,14 @@
             document.getElementById('submitBtn').textContent = isBusy ? 'Submitting...' : '✓ Submit to Database';
         }
 
+        function confirmSourceUpdates(updates) {
+            const lines = updates.map(change => `- ${change.name}: ${change.field} "${change.old || '(empty)'}" → "${change.new}"`);
+            return window.confirm(
+                `These Sources already exist with other details:\n${lines.join('\n')}\n\n` +
+                'Update them in Notion? Every record that links to these people shows the new details. Choose Cancel to go back to the form.'
+            );
+        }
+
         function confirmDuplicateAmendment(duplicate) {
             const changes = (duplicate.changes || []).map(change => `- ${change.field}`).join('\n') || '- No field changes detected';
             return window.confirm(
@@ -1469,6 +1477,17 @@
                     }
                     formData.append('amend_existing', 'true');
                     formData.append('existing_sample_id', validation.existing_sample.page_id);
+                }
+                if (validation.source_updates && validation.source_updates.length) {
+                    if (!confirmSourceUpdates(validation.source_updates)) {
+                        messageDiv.style.display = 'block';
+                        messageDiv.className = 'message error';
+                        messageDiv.textContent = 'Nothing was saved. Correct or remove the Source details, or submit again and confirm the change.';
+                        messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        setSampleFormBusy(false);
+                        return;
+                    }
+                    formData.append('update_sources', 'true');
                 }
             } catch (error) {
                 messageDiv.style.display = 'block';

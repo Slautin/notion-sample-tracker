@@ -125,14 +125,15 @@ Opening the app's address shows a start page in the same style as the forms. **A
 Records are changed through the forms, never deleted. Submitting the name of an existing sample or data entry amends it:
 
 1. Before anything is uploaded, the form lists the fields that would change and asks you to confirm. If you decline, nothing changes and you can pick another name.
-2. Only the fields that differ are written to Notion. A field left empty keeps its current value, including multi-choice fields such as Synthesis, Processing and Characterisation.
+2. Only the fields that differ are written to Notion. A field left empty keeps its current value, including multi-choice fields such as Synthesis, Processing and Characterisation. Choosing Sources replaces the record's Sources; leaving them empty keeps them.
 3. The server keeps every version: `revisions/<id>/record.json` with the changed fields, and `current/record.json` with the whole page after the amendment. Earlier records and files are never replaced.
 
 For a data entry:
 
 - The parent (sample or dataset) cannot change, because the entry's files live in the parent's folder. To file the data elsewhere, use a new name.
 - Leave Data empty to keep the current file or link. A new file is stored next to the old one (`scan.csv`, `scan-1.csv`, ...) and `Link` points to it; the old file stays on the server.
-- Choosing Sources replaces the entry's Sources; leaving them empty keeps them.
+
+Sources are matched by name. When a form adds a Source whose name already exists with a different email or affiliation, the form shows the change (`Ada Lovelace: Affiliation "UTK" → "ORNL"`) and asks before updating the person in Notion. Every record that links to that person then shows the new details. Details left empty keep the current ones. Each change is saved as `sources/<name>/revisions/<id>/record.json`. A misspelled name counts as a different person.
 
 ## Storage backends
 

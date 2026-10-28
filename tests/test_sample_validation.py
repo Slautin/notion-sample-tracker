@@ -18,6 +18,9 @@ class DuplicateSampleNotion:
     def sample_exists(self, name):
         return name == "PTO54"
 
+    def describe_relations(self, page):
+        return {}, [], []
+
 
 def test_duplicate_sample_name_requires_change():
     form = SampleForm(name="PTO54", sample_type="Root Sample", composition="PbTiO3", submission_id="new-submission")

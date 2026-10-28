@@ -11,7 +11,7 @@ from typing import Any, Callable
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 
 from notion_sample_tracker.access import install_access_control
-from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, ResultForm, SampleForm, now_iso
+from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, PersonRef, ResultForm, SampleForm, now_iso
 from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, safe_path_segment, safe_upload_filename
 from notion_sample_tracker.services.backlog import JsonlBacklog
 from notion_sample_tracker.services.formula import FormulaParser
@@ -287,9 +287,10 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             form = SampleForm.from_form(request.form)
             _validate_sample_form(form, notion, allow_existing_name=True)
             duplicate = _sample_duplicate_info(form, notion)
+            source_updates = notion.source_detail_changes(form.sources)
             if duplicate:
-                return jsonify(_duplicate_sample_response(duplicate)), 409
-            return jsonify({"success": True})
+                return jsonify({**_duplicate_sample_response(duplicate), "source_updates": source_updates}), 409
+            return jsonify({"success": True, "source_updates": source_updates})
         except Exception as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
 
@@ -299,9 +300,10 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             form = ResultForm.from_form(request.form)
             duplicate = _result_duplicate_info(form, notion)
             _validate_result_raw(_form_payload(request.form), notion, preflight=True, amending=duplicate is not None)
+            source_updates = notion.source_detail_changes(form.sources)
             if duplicate:
-                return jsonify(_duplicate_result_response(duplicate)), 409
-            return jsonify({"success": True})
+                return jsonify({**_duplicate_result_response(duplicate), "source_updates": source_updates}), 409
+            return jsonify({"success": True, "source_updates": source_updates})
         except Exception as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
 
@@ -320,7 +322,9 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                     return jsonify(_duplicate_sample_response(duplicate)), 409
                 if existing_sample_id != duplicate["page"]["id"]:
                     raise ValueError("Duplicate sample confirmation did not match the existing Notion record.")
+                _apply_source_updates(form.sources, notion, storage, confirmed=_truthy(request.form.get("update_sources")))
                 return _submit_sample_amendment(form, duplicate, notion, storage, backlog, settings)
+            _apply_source_updates(form.sources, notion, storage, confirmed=_truthy(request.form.get("update_sources")))
             page = notion.sample_page_by_submission(form.submission_id)
             if page and notion.archive_status_from_page(page) == ARCHIVE_COMPLETE:
                 return jsonify(
@@ -408,6 +412,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             try:
                 if str(request.form.get("existing_result_id") or "").strip() != duplicate["page"]["id"]:
                     raise ValueError("Duplicate data entry confirmation did not match the existing Notion record.")
+                _apply_source_updates(form.sources, notion, storage, confirmed=_truthy(request.form.get("update_sources")))
                 return _submit_result_amendment(form, raw_form, duplicate, notion, storage, backlog)
             except Exception as exc:
                 app_log("result_amendment_failed", page_id=duplicate["page"]["id"], error=str(exc))
@@ -417,6 +422,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                 return jsonify({"success": False, "stage": "amendment", "error": str(exc)}), 400
 
         try:
+            _apply_source_updates(form.sources, notion, storage, confirmed=_truthy(request.form.get("update_sources")))
             page = notion.result_page_by_submission(form.submission_id)
             if page and notion.archive_status_from_page(page) == ARCHIVE_COMPLETE:
                 return jsonify(
@@ -894,6 +900,34 @@ def _submit_result_amendment(
     )
 
 
+def _apply_source_updates(sources: list[PersonRef], notion: NotionRepository, storage: Storage, confirmed: bool) -> list[dict[str, str]]:
+    """Update existing Sources' email and affiliation as entered in the form, once the person submitting confirmed it.
+
+    Without that confirmation existing Sources stay as they are. Each change is saved as
+    sources/<name>/revisions/<id>/record.json with the person's page after the change.
+    """
+    if not confirmed:
+        return []
+    changes = notion.source_detail_changes(sources)
+    if not changes:
+        return []
+    revision_id = _revision_id()
+    for person in notion.update_source_details(changes):
+        folder = f"sources/{safe_path_segment(_page_title(person), fallback='source')}"
+        storage.upload_json(
+            f"{folder}/revisions/{revision_id}/record.json",
+            {
+                "kind": "source",
+                "captured_at": now_iso(),
+                "revision_id": revision_id,
+                "changed_fields": [change for change in changes if change["page_id"] == person["id"]],
+                "notion": person,
+            },
+        )
+    app_log("source_details_updated", count=len(changes))
+    return changes
+
+
 def _result_duplicate_info(form: ResultForm, notion: NotionRepository) -> dict[str, Any] | None:
     """The existing data entry this form would amend and what would change; None for a new entry or a retry.
 
@@ -967,7 +1001,14 @@ def _sample_duplicate_info(form: SampleForm, notion: NotionRepository) -> dict[s
         existing_submission = notion.sample_page_by_submission(form.submission_id)
         if existing_submission and existing_submission.get("id") == existing.get("id") and _sample_submission_matches_page(form, existing_submission):
             return None
-    changes = _sample_field_changes(form, existing, lambda value: notion.resolve_sample_page_id(value), composition=_stored_composition(form, notion))
+    relations, _, _ = notion.describe_relations(existing)
+    changes = _sample_field_changes(
+        form,
+        existing,
+        lambda value: notion.resolve_sample_page_id(value),
+        composition=_stored_composition(form, notion),
+        source_names=[item["name"] for item in relations.get("Source", [])],
+    )
     return {"page": existing, "changes": changes}
 
 
@@ -1003,8 +1044,12 @@ def _sample_field_changes(
     page: dict[str, Any],
     resolve_parent: Callable[[str], str] | None = None,
     composition: str | None = None,
+    source_names: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """What an amendment would change. `composition` is the form's formula as Notion would store it."""
+    """What an amendment would change.
+
+    `composition` is the form's formula as Notion would store it; `source_names` are the sample's current Sources.
+    """
     comparisons = [
         ("Sample Type", form.sample_type, _page_select(page, "Sample Type"), "text"),
         ("Composition", form.composition if composition is None else composition, _page_text(page, "Composition"), "optional_text"),
@@ -1014,6 +1059,8 @@ def _sample_field_changes(
         ("Processing Details", form.processing_details, _page_text(page, "Processing Details"), "optional_text"),
         ("Status", form.status, _page_select(page, "Status"), "optional_text"),
     ]
+    if source_names is not None:
+        comparisons.append(("Source", [person.name for person in form.sources], source_names, "set"))
     if _is_subsample(form.sample_type):
         parent_id = _resolved_parent_id(form.parent_sample_id, resolve_parent)
         comparisons.insert(2, ("Parent Sample", parent_id, _page_relation_id(page, "Parent Sample"), "page_id"))

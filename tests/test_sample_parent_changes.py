@@ -126,6 +126,9 @@ class SubSampleNotion:
     def resolve_sample_page_id(self, value):
         return _resolver(self.parents)(value)
 
+    def describe_relations(self, page):
+        return {}, [], []
+
 
 def test_duplicate_info_for_an_unchanged_sub_sample_has_no_changes():
     info = app_module._sample_duplicate_info(_form("PTO54"), SubSampleNotion(_sub_sample_page(), {"PTO54": PARENT_ID}))

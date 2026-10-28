@@ -1413,6 +1413,14 @@ async function validateResultBeforeUpload(form) {
   return result;
 }
 
+function confirmSourceUpdates(updates) {
+  const lines = updates.map(change => `- ${change.name}: ${change.field} "${change.old || '(empty)'}" → "${change.new}"`);
+  return window.confirm(
+    `These Sources already exist with other details:\n${lines.join('\n')}\n\n` +
+    'Update them in Notion? Every record that links to these people shows the new details. Choose Cancel to go back to the form.'
+  );
+}
+
 function confirmEntryAmendment(duplicate, dataType) {
   const lines = (duplicate.changes || []).map(change => `- ${change.field}`);
   if (dataType === 'file' && !lines.includes('- Link')) {
@@ -1516,6 +1524,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
   }
 
   let amendTarget = '';
+  let updateSources = false;
   try {
     const validation = await validateResultBeforeUpload(e.target);
     if (validation.duplicate) {
@@ -1534,6 +1543,16 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
       messageDiv.textContent = '✗ Please select Data Type (Link or File).';
       messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
+    }
+    if (validation.source_updates && validation.source_updates.length) {
+      if (!confirmSourceUpdates(validation.source_updates)) {
+        messageDiv.className = 'message error';
+        messageDiv.style.display = 'block';
+        messageDiv.textContent = 'Nothing was saved. Correct or remove the Source details, or submit again and confirm the change.';
+        messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      updateSources = true;
     }
   } catch (err) {
     messageDiv.className = 'message error';
@@ -1584,6 +1603,9 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
     if (amendTarget) {
       formData.append('amend_existing', 'true');
       formData.append('existing_result_id', amendTarget);
+    }
+    if (updateSources) {
+      formData.append('update_sources', 'true');
     }
 
     const r = await fetch('/api/submit-data', {

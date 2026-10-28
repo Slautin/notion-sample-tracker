@@ -393,6 +393,34 @@ class NotionRepository:
                 relations.append({"id": page["id"]})
         return relations
 
+    def source_detail_changes(self, sources: list[PersonRef]) -> list[dict[str, str]]:
+        """Email and affiliation values in `sources` that differ from an existing person's. Reads only.
+
+        A value left empty in the form is no change; a new person is not a change either.
+        """
+        changes: list[dict[str, str]] = []
+        for person in sources:
+            if person.notion_id or not (person.email or person.affiliation):
+                continue
+            existing = self._find_by_title(self.people_db, "Person", person.name)
+            if not existing:
+                continue
+            old_email = existing.get("properties", {}).get("Email", {}).get("email") or ""
+            if person.email and person.email.strip().casefold() != old_email.strip().casefold():  # addresses ignore case
+                changes.append({"page_id": existing["id"], "name": person.name, "field": "Email", "old": old_email, "new": person.email})
+            old_affiliation = self._plain_text_property(existing, "Affiliation")
+            if person.affiliation and person.affiliation.strip() != old_affiliation.strip():
+                changes.append({"page_id": existing["id"], "name": person.name, "field": "Affiliation", "old": old_affiliation, "new": person.affiliation})
+        return changes
+
+    def update_source_details(self, changes: list[dict[str, str]]) -> list[dict[str, Any]]:
+        """Write the changes from source_detail_changes to the People pages; returns each updated page."""
+        by_page: dict[str, dict[str, Any]] = {}
+        for change in changes:
+            value = {"email": change["new"]} if change["field"] == "Email" else self._rich_text(change["new"])
+            by_page.setdefault(change["page_id"], {})[change["field"]] = value
+        return [self.client.pages.update(page_id=page_id, properties=properties) for page_id, properties in by_page.items()]
+
     def _get_or_create_person(self, person: PersonRef) -> dict[str, Any]:
         existing = self._find_by_title(self.people_db, "Person", person.name)
         if existing:
