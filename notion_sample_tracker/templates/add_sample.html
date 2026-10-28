@@ -1510,6 +1510,7 @@
                         }
                         showSubmissionSuccess(retryResult.message, retryResult.receipt, retryResult.warning);
                         document.getElementById('sampleForm').reset();
+                        resetSubmissionId();
                         selectedProcessing = [];
                         selectedSources = [];
                         updateSelectedProcessingList();
@@ -1530,6 +1531,8 @@
                     showSubmissionSuccess(result.message, result.receipt, result.warning);
 
                     document.getElementById('sampleForm').reset();
+                    // form.reset() keeps a hidden input's value; a repeated ID would make the next sample look like a retry.
+                    resetSubmissionId();
 
                     selectedProcessing = [];
                     selectedSources = [];

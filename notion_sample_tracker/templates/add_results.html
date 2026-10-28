@@ -1409,13 +1409,25 @@ async function validateResultBeforeUpload(form) {
   }
 }
 
+function newSubmissionId() {
+  return (window.crypto && window.crypto.randomUUID)
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function ensureSubmissionId() {
   const input = document.getElementById('submission_id');
   if (input && !input.value) {
-    input.value = (window.crypto && window.crypto.randomUUID)
-      ? window.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    input.value = newSubmissionId();
   }
+  return input ? input.value : '';
+}
+
+// A new ID after every saved entry. form.reset() keeps a hidden input's value, and the server treats a
+// repeated ID as a retry of the entry already saved under it.
+function resetSubmissionId() {
+  const input = document.getElementById('submission_id');
+  if (input) input.value = newSubmissionId();
   return input ? input.value : '';
 }
 
@@ -1559,6 +1571,7 @@ document.getElementById('dataForm').addEventListener('submit', async (e) => {
 
       // reset UI
       e.target.reset();
+      resetSubmissionId();
       setParentEntryUI('');
       selectedSources = [];
       sourceFormCounter = 0;

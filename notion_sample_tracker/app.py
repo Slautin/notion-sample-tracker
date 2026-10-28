@@ -1013,7 +1013,13 @@ def _validate_result_raw(
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
     submission_id = str(raw_form.get("submission_id") or raw_form.get("submissionId") or "").strip()
-    if submission_id and notion.result_page_by_submission(submission_id):
+    submitted = notion.result_page_by_submission(submission_id) if submission_id else None
+    if submitted:
+        if not _same_text(_page_title(submitted), name):
+            # Not a retry: a form left open after a submission sent its old ID with a new entry.
+            raise ValueError(
+                f"This form was already used to submit '{_page_title(submitted)}'. Reload the page to submit another data entry."
+            )
         return
     if notion.result_exists(name):
         raise ValueError(f"A result with name '{name}' already exists. Please choose another name.")
