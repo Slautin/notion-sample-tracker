@@ -119,7 +119,6 @@ Opening the app's address shows a start page in the same style as the forms. **A
 
 - Set the database links with `NOTION_SAMPLES_URL`, `NOTION_RESULTS_URL` and `NOTION_SOURCES_URL`. In Notion, open the database view you want people to see and use Copy link. A button without a link is hidden; a link without `https://` is refused at startup.
 - `NOTION_HOME_URL` (or the older `NOTION_PAGE`) adds an "Open the Notion workspace" link. The start page no longer redirects to Notion.
-- With local storage it also has **Samples CSV**, **Results CSV** and **Sources CSV** downloads (see [Server records and CSV export](#server-records-and-csv-export)).
 
 ## Storage backends
 
@@ -149,17 +148,17 @@ Samples are saved at `samples/<composition>/<name>/record.json`. An amendment wr
 
 The record is written once before the archive status is set, so a record exists before Notion can say `Archive complete`, and again afterwards from the page Notion returned. If the second write fails, the page is marked `Failed archive`.
 
-With local storage, the start page's CSV buttons (`/exports/samples.csv`, `/exports/results.csv`, `/exports/sources.csv`) build a table from the newest record of each page when you click them:
-
-- The title column comes first, then the other Notion properties A to Z, then `notion_page_id`, `notion_url`, `created_time`, `last_edited_time`, `captured_at` and `record_path`.
-- Linked records appear by name. Several values in one cell are separated by `; `. Files that Notion stores appear by name only, because their Notion links expire within an hour.
-- The files are UTF-8 with a byte order mark so Excel shows µ, Å and ° correctly. A cell that a spreadsheet would run as a formula starts with `'`.
-
-The same tables from the command line. This also works on a synced copy of the OneDrive folder:
+Whoever runs the server can turn the records into `samples.csv`, `results.csv` and `sources.csv`. The website offers no CSV downloads. Run this on the server, or on a synced copy of the OneDrive folder:
 
 ```bash
 python -m notion_sample_tracker.records_export --root /var/lib/sampletracker/files --out ./exports
 ```
+
+Each table has one row per Notion page, from its newest record:
+
+- The title column comes first, then the other Notion properties A to Z, then `notion_page_id`, `notion_url`, `created_time`, `last_edited_time`, `captured_at` and `record_path`.
+- Linked records appear by name. Several values in one cell are separated by `; `. Files that Notion stores appear by name only, because their Notion links expire within an hour.
+- The files are UTF-8 with a byte order mark so Excel shows µ, Å and ° correctly. A cell that a spreadsheet would run as a formula starts with `'`.
 
 What the server copy does not show:
 

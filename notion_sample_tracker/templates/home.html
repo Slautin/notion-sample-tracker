@@ -121,8 +121,6 @@
         .btn-primary:hover { background: var(--accent-dark); }
         .btn-secondary { background: var(--slate); }
         .btn-secondary:hover { background: var(--slate-dark); }
-        .btn-outline { background: white; color: var(--slate); border: 1px solid var(--line); }
-        .btn-outline:hover { border-color: var(--slate); color: var(--ink); }
 
         .hint {
             margin-top: 10px;
@@ -182,16 +180,6 @@
                 {% endfor %}
             </div>
             <p class="hint">Opens in a new tab. You need access to the lab's Notion workspace.</p>
-            {% endif %}
-
-            {% if storage_backend == "local" %}
-            <h2 class="section-title">Download from this server</h2>
-            <div class="actions">
-                <a class="btn btn-outline" href="{{ url_for('export_records', table='samples') }}">Samples CSV</a>
-                <a class="btn btn-outline" href="{{ url_for('export_records', table='results') }}">Results CSV</a>
-                <a class="btn btn-outline" href="{{ url_for('export_records', table='sources') }}">Sources CSV</a>
-            </div>
-            <p class="hint">Built from the records saved on this server. Each row shows the Notion page as it was after its last submission through these forms.</p>
             {% endif %}
 
             {% if notion_home_url %}

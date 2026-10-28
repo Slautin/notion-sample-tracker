@@ -10,7 +10,6 @@ from typing import Any, Callable
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 
-from notion_sample_tracker import records_export
 from notion_sample_tracker.access import install_access_control
 from notion_sample_tracker.models import ARCHIVE_COMPLETE, ARCHIVE_FAILED, ARCHIVE_PENDING, BacklogEvent, ResultForm, SampleForm, now_iso
 from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, safe_path_segment, safe_upload_filename
@@ -598,22 +597,6 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             response.headers["Cache-Control"] = "private, no-cache"
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
-            return response
-
-        @app.get("/exports/<table>.csv")
-        def export_records(table: str):
-            if table not in records_export.TABLES:
-                abort(404)
-            records, skipped = records_export.load_records(local_storage.real_root)
-            kind = records_export.TABLES[table]
-            columns, rows = records_export.build_table([record for record in records_export.latest_per_page(records) if record.kind == kind])
-            if skipped:
-                app_log("export_skipped_files", table=table, count=len(skipped), first=skipped[0])
-            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            response = app.response_class(records_export.csv_bytes(columns, rows), mimetype="text/csv")
-            response.headers["Content-Disposition"] = f'attachment; filename="{table}-{stamp}.csv"'
-            response.headers["Cache-Control"] = "private, no-store"
-            response.headers["X-Content-Type-Options"] = "nosniff"
             return response
 
     @app.post("/api/save-json")

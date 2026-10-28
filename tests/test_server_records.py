@@ -1,4 +1,4 @@
-"""The record.json files saved on the server match Notion after a submission, and the CSV export reads them.
+"""The record.json files saved on the server match Notion after a submission, and the CSV export command reads them.
 
 These run the real routes and the real NotionRepository against a small in-memory Notion, so the records are
 compared with what Notion itself would hold, not with what a stub returned.
@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import notion_sample_tracker.app as app_module
+from notion_sample_tracker import records_export
 from notion_sample_tracker.services.local_storage import LocalStorage
 from notion_sample_tracker.services.notion_client import NotionRepository
 from notion_sample_tracker.settings import Settings
@@ -435,27 +436,26 @@ def test_photos_with_the_same_name_are_all_kept(tmp_path, api, client):
     assert [item["path"] for item in record["files"]] == ["samples/TiPbO3/PTO54/photos/image.jpg", "samples/TiPbO3/PTO54/photos/image-1.jpg"]
 
 
-# --- CSV downloads ---
+# --- CSV tables from the saved records ---
 
 
-def _csv(response):
-    assert response.status_code == 200
-    assert response.mimetype == "text/csv"
-    assert response.data.startswith(b"\xef\xbb\xbf")
-    return list(csv.DictReader(io.StringIO(response.data.decode("utf-8-sig"))))
+def _table(tmp_path, table):
+    """The CSV the export command writes for `table`, read back as rows."""
+    out = tmp_path / "exports"
+    assert records_export.main(["--root", str(tmp_path / "files"), "--out", str(out)]) == 0
+    data = (out / f"{table}.csv").read_bytes()
+    assert data.startswith(b"\xef\xbb\xbf")
+    return list(csv.DictReader(io.StringIO(data.decode("utf-8-sig"))))
 
 
-def test_the_samples_csv_has_one_row_per_sample_with_notion_values(tmp_path, api, client):
+def test_the_samples_table_has_one_row_per_sample_with_notion_values(tmp_path, api, client):
     _submit_sample(client)
     sample = api.page_named("PTO54")
     amended = _submit_sample(client, synthesis="Sol-gel", amend_existing="true", existing_sample_id=sample["id"], photos=(io.BytesIO(b"\x89PNG side"), "side.png"))
     assert amended.status_code == 200, amended.get_json()
 
-    response = client.get("/exports/samples.csv")
-    rows = _csv(response)
-    assert 'filename="samples-' in response.headers["Content-Disposition"]
-    assert response.headers["Cache-Control"] == "private, no-store"
-    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    rows = _table(tmp_path, "samples")
+
     assert len(rows) == 1
     row = rows[0]
     assert list(row)[0] == "Name"
@@ -469,12 +469,12 @@ def test_the_samples_csv_has_one_row_per_sample_with_notion_values(tmp_path, api
     assert row["record_path"].startswith(("samples/TiPbO3/PTO54/current/", "samples/TiPbO3/PTO54/revisions/"))
 
 
-def test_the_results_and_sources_csv_files(tmp_path, api, client):
+def test_the_results_and_sources_tables(tmp_path, api, client):
     _submit_sample(client)
     _submit_result(client)
 
-    results = _csv(client.get("/exports/results.csv"))
-    sources = _csv(client.get("/exports/sources.csv"))
+    results = _table(tmp_path, "results")
+    sources = _table(tmp_path, "sources")
 
     assert [row["Name"] for row in results] == ["XRD run 1"]
     assert "PTO54" in results[0].values()
@@ -482,25 +482,7 @@ def test_the_results_and_sources_csv_files(tmp_path, api, client):
     assert sources[0]["Email"] == "ada@utk.edu"
 
 
-def test_an_unknown_table_is_not_found(client):
-    assert client.get("/exports/people.csv").status_code == 404
-
-
-def test_the_start_page_links_the_csv_downloads_for_local_storage(client):
-    page = client.get("/").get_data(as_text=True)
-
-    for table in ("samples", "results", "sources"):
-        assert f'href="/exports/{table}.csv"' in page
-
-
-def test_there_are_no_csv_downloads_with_onedrive_storage(tmp_path, api, monkeypatch):
-    class StubOneDrive:
-        def __init__(self, **kwargs):
-            pass
-
-    monkeypatch.setattr(app_module, "OneDriveClient", StubOneDrive)
-    monkeypatch.setattr(app_module, "_verify_onedrive_at_startup", lambda storage: None)
-    client = app_module.create_app(settings_factory=lambda: _settings(tmp_path, storage_backend="onedrive", onedrive_drive_id="b!drive")).test_client()
-
-    assert client.get("/exports/samples.csv").status_code == 404
+def test_the_website_offers_no_csv_downloads(client):
+    # The tables are for whoever runs the server (python -m notion_sample_tracker.records_export), not for every user.
     assert "/exports/" not in client.get("/").get_data(as_text=True)
+    assert client.get("/exports/samples.csv").status_code == 404
