@@ -543,6 +543,10 @@ def test_with_onedrive_storage_the_local_routes_do_not_exist_and_the_upload_sess
     response = client.post("/api/create-upload-session", json={"filename": "a.csv", "size": 4, "parent_sample": "PTO54", "entry_name": "run 1"})
     assert response.status_code == 200
     assert response.get_json()["onedrive_path"] == "samples/PbTiO3/PTO54/results/run_1/a.csv"
+    # The app writes record.json and <entry>_qr.png into this folder after the upload; OneDrive ignores case.
+    for filename, stored in [("record.json", "record-1.json"), ("RUN_1_QR.png", "RUN_1_QR-1.png"), ("run_2_qr.png", "run_2_qr.png")]:
+        response = client.post("/api/create-upload-session", json={"filename": filename, "size": 4, "parent_sample": "PTO54", "entry_name": "run 1"})
+        assert response.get_json()["onedrive_path"] == f"samples/PbTiO3/PTO54/results/run_1/{stored}"
     assert 'const STORAGE_BACKEND = "onedrive";' in client.get("/results/new").get_data(as_text=True)
     assert not (tmp_path / "files").exists()  # nothing is created on disk for the OneDrive backend
 

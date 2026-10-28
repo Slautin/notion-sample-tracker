@@ -48,8 +48,8 @@ def _settings(tmp_path) -> Settings:
     )
 
 
-def _photo(name="sample.png") -> FileStorage:
-    return FileStorage(stream=BytesIO(b"image bytes"), filename=name, content_type="image/png")
+def _photo(name="sample.png", content=b"image bytes") -> FileStorage:
+    return FileStorage(stream=BytesIO(content), filename=name, content_type="image/png")
 
 
 def test_sample_photo_upload_failure_returns_warning(tmp_path):
@@ -74,3 +74,15 @@ def test_sample_photo_upload_success_attaches_to_notion(tmp_path):
     assert notion.attached[0][1] == "Photos"
     assert notion.attached[0][2][0]["content"] == b"image bytes"
     assert notion.attached[0][2][0]["content_type"] == "image/png"
+
+
+def test_photos_with_the_same_name_get_their_own_names_on_the_server_and_in_notion(tmp_path):
+    notion = FakeNotion()
+    photos = [_photo("image.jpg", b"one"), _photo("image.jpg", b"two"), _photo("IMAGE.JPG", b"three"), _photo("other.jpg", b"four")]
+
+    uploaded, errors = _archive_sample_photos(notion, WorkingOneDrive(), "page-id", "samples/S1/photos", photos, _settings(tmp_path))
+
+    assert errors == []
+    assert [item["name"] for item in uploaded] == ["image.jpg", "image-1.jpg", "IMAGE-2.jpg", "other.jpg"]
+    assert [item["name"] for item in notion.attached[0][2]] == ["image.jpg", "image-1.jpg", "IMAGE-2.jpg", "other.jpg"]
+    assert [item["content"] for item in notion.attached[0][2]] == [b"one", b"two", b"three", b"four"]

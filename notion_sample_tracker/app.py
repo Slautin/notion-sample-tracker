@@ -514,6 +514,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
             if size and size > settings.max_upload_file_mb * 1024 * 1024:
                 return jsonify({"success": False, "error": f"File exceeds {settings.max_upload_file_mb} MB limit."}), 400
             parent_folder = _result_upload_parent_folder(notion, parent_sample, parent_dataset)
+            filename = _avoid_names(filename, _app_file_names(entry_name))
             session = storage.create_upload_session(f"{parent_folder}/results/{entry_name}/{filename}")
             return jsonify({"success": True, **session})
         except Exception as exc:
@@ -540,7 +541,7 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                 parent_folder = _result_upload_parent_folder(
                     notion, str(data.get("parent_sample") or ""), str(data.get("parent_dataset") or "")
                 )
-                info = uploads.create(filename, data.get("size"), f"{parent_folder}/results/{entry_name}")
+                info = uploads.create(filename, data.get("size"), f"{parent_folder}/results/{entry_name}", reserved_names=_app_file_names(entry_name))
             except StorageFull as exc:
                 return upload_error(str(exc), 507)
             except ValueError as exc:
@@ -696,9 +697,12 @@ def _archive_sample_photos(
     uploaded: list[dict[str, str]] = []
     errors: list[str] = []
     notion_files = []
+    used_names: set[str] = set()
     files = _validate_uploads(files, settings)
     for file_storage in files:
-        safe_name = safe_upload_filename(file_storage.filename)
+        # Phones often name every camera photo image.jpg; each photo of a submission gets its own name.
+        safe_name = _avoid_names(safe_upload_filename(file_storage.filename), used_names)
+        used_names.add(safe_name.casefold())
         content = file_storage.read()
         content_type = file_storage.mimetype or "application/octet-stream"
         try:
@@ -1085,6 +1089,24 @@ def _form_payload(form) -> dict:
 
 def _safe_segment(value: str) -> str:
     return safe_path_segment(value, fallback="entry")
+
+
+def _app_file_names(entry_name: str) -> set[str]:
+    """The names the app writes into a result entry's folder after the upload: its record and its QR code."""
+    return {"record.json", f"{_safe_segment(entry_name)}_qr.png".casefold()}
+
+
+def _avoid_names(filename: str, taken: set[str]) -> str:
+    """`filename`, or name-1.ext, name-2.ext, ... if that is in `taken` (casefolded names).
+
+    Names are compared ignoring case because OneDrive and SharePoint treat Record.json and record.json as one file.
+    """
+    stem, suffix = os.path.splitext(filename)
+    candidate, counter = filename, 0
+    while candidate.casefold() in taken:
+        counter += 1
+        candidate = f"{stem}-{counter}{suffix}"
+    return candidate
 
 
 def _validate_uploads(files, settings: Settings) -> list[Any]:

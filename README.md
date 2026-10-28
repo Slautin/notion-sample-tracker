@@ -135,6 +135,8 @@ Opening the app's address shows a start page in the same style as the forms. **A
 
 Both use the same folder layout (`samples/<composition>/<name>/...`, `.../results/<entry>/...`) and write the same `record.json` snapshots.
 
+Neither overwrites an uploaded file. A result entry's folder holds the uploaded files and, written after them, the app's `record.json` and `<entry>_qr.png`. An upload with one of those names, ignoring case (OneDrive treats `Record.json` and `record.json` as one file), is stored as `record-1.json`, `<entry>_qr-1.png` and so on. Photos with the same name in one submission (phones often call every photo `image.jpg`) become `image.jpg`, `image-1.jpg`, ..., on the server and in Notion.
+
 ## Server records and CSV export
 
 Each submission saves a `record.json` next to its files, so the server holds a readable copy of what is in Notion:

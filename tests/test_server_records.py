@@ -170,10 +170,14 @@ def _submit_sample(client, **fields):
     return response
 
 
-def _submit_result(client, name="XRD run 1", content=b"a,b\n1,2\n"):
-    started = client.post("/api/uploads", json={"filename": "scan.csv", "size": len(content), "entry_name": name, "parent_sample": "PTO54"}).get_json()
+def _chunked_upload(client, filename, content, entry_name="XRD run 1"):
+    started = client.post("/api/uploads", json={"filename": filename, "size": len(content), "entry_name": entry_name, "parent_sample": "PTO54"}).get_json()
     client.put(f"/api/uploads/{started['upload_id']}", data=content, headers={"Upload-Offset": "0"})
-    done = client.post(f"/api/uploads/{started['upload_id']}/complete").get_json()
+    return client.post(f"/api/uploads/{started['upload_id']}/complete").get_json()
+
+
+def _submit_result(client, name="XRD run 1", content=b"a,b\n1,2\n"):
+    done = _chunked_upload(client, "scan.csv", content, entry_name=name)
     return client.post(
         "/api/submit-data",
         data={
@@ -383,6 +387,54 @@ def test_a_linked_record_notion_cannot_read_keeps_its_id_and_is_reported(tmp_pat
     assert not (tmp_path / "files/sources").exists()
 
 
+# --- uploaded files are never overwritten ---
+
+
+def test_uploaded_files_named_like_the_app_record_and_qr_code_are_kept(tmp_path, api, client):
+    _submit_sample(client)
+    mine = {
+        "record.json": b'{"instrument": "my own record"}',
+        "Record.JSON": b'{"instrument": "upper case"}',
+        "XRD_run_1_qr.png": b"my own QR picture",
+    }
+    names = {filename: _chunked_upload(client, filename, content)["name"] for filename, content in mine.items()}
+
+    response = _submit_result(client)
+    assert response.status_code == 200, response.get_json()
+
+    folder = tmp_path / "files/samples/TiPbO3/PTO54/results/XRD_run_1"
+    assert names["record.json"] == "record-1.json"
+    assert names["XRD_run_1_qr.png"] == "XRD_run_1_qr-1.png"
+    # Record-1.json on a case-sensitive disk (Linux); Record-2.json where record-1.json already counts (macOS).
+    assert names["Record.JSON"] in {"Record-1.json", "Record-2.json"}
+    for filename, content in mine.items():
+        assert (folder / names[filename]).read_bytes() == content
+    assert json.loads((folder / "record.json").read_text())["kind"] == "result"
+    assert (folder / "XRD_run_1_qr.png").read_bytes().startswith(b"\x89PNG")
+
+
+def test_photos_with_the_same_name_are_all_kept(tmp_path, api, client):
+    response = client.post(
+        "/api/submit",
+        data={
+            "sample_name": "PTO54",
+            "sample_type": "Root Sample",
+            "composition": "PbTiO3",
+            "sources_data": SOURCES,
+            "photos": [(io.BytesIO(b"\x89PNG first"), "image.jpg"), (io.BytesIO(b"\x89PNG second"), "image.jpg")],
+        },
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200, response.get_json()
+
+    photos = tmp_path / "files/samples/TiPbO3/PTO54/photos"
+    assert (photos / "image.jpg").read_bytes() == b"\x89PNG first"
+    assert (photos / "image-1.jpg").read_bytes() == b"\x89PNG second"
+    record = _read(tmp_path, "samples/TiPbO3/PTO54/record.json")
+    assert [item["name"] for item in record["notion"]["properties"]["Photos"]["files"]] == ["image.jpg", "image-1.jpg"]
+    assert [item["path"] for item in record["files"]] == ["samples/TiPbO3/PTO54/photos/image.jpg", "samples/TiPbO3/PTO54/photos/image-1.jpg"]
+
+
 # --- CSV downloads ---
 
 
@@ -403,6 +455,7 @@ def test_the_samples_csv_has_one_row_per_sample_with_notion_values(tmp_path, api
     rows = _csv(response)
     assert 'filename="samples-' in response.headers["Content-Disposition"]
     assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert len(rows) == 1
     row = rows[0]
     assert list(row)[0] == "Name"

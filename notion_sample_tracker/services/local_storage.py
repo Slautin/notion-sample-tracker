@@ -19,7 +19,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO, Callable, Iterator
+from typing import BinaryIO, Callable, Iterable, Iterator
 from urllib.parse import quote, unquote
 
 try:
@@ -193,7 +193,8 @@ class ResumableUploads:
     def base(self) -> Path:
         return self.storage.real_root / STAGING_DIR
 
-    def create(self, filename: str, size: object, target_dir: str) -> dict:
+    def create(self, filename: str, size: object, target_dir: str, reserved_names: Iterable[str] = ()) -> dict:
+        """Start an upload. The finished file never takes one of `reserved_names` (compared ignoring case)."""
         if isinstance(size, bool) or not isinstance(size, int):
             raise ValueError("size must be a whole number of bytes.")
         if size <= 0:
@@ -215,6 +216,7 @@ class ResumableUploads:
             "filename": name,
             "size": size,
             "target_dir": folder,
+            "reserved_names": sorted({name.casefold() for name in reserved_names}),
             "created_at": time.time(),
             "completed": None,
         }
@@ -269,7 +271,7 @@ class ResumableUploads:
                 raise UploadIncomplete(received, meta["size"])
             target_dir, folder = self.storage._locate(meta["target_dir"])
             target_dir.mkdir(parents=True, exist_ok=True)
-            final = self._reserve_unique(target_dir, meta["filename"])
+            final = self._reserve_unique(target_dir, meta["filename"], set(meta.get("reserved_names", [])))
             try:
                 with open(part, "rb+") as handle:
                     os.fsync(handle.fileno())
@@ -354,13 +356,18 @@ class ResumableUploads:
         os.replace(temporary, directory / "meta.json")
 
     @staticmethod
-    def _reserve_unique(directory: Path, filename: str) -> Path:
-        """Create an empty file with a name nobody else has taken (name.ext, name-1.ext, ...) and return its path."""
+    def _reserve_unique(directory: Path, filename: str, reserved: set[str] = frozenset()) -> Path:
+        """Create an empty file with a name nobody else has taken (name.ext, name-1.ext, ...) and return its path.
+
+        Names in `reserved` (casefolded) are skipped even while free: the app writes those files later.
+        """
         stem, suffix = os.path.splitext(filename)
         for counter in range(10000):
             candidate = filename if counter == 0 else f"{stem}-{counter}{suffix}"
             if len(candidate.encode("utf-8")) > MAX_NAME_BYTES:
                 raise InvalidStoragePath("The file name is too long to make unique.")
+            if candidate.casefold() in reserved:
+                continue
             path = directory / candidate
             try:
                 handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, FILE_MODE)
