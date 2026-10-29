@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Withdraw a Record</title>
+    <style>
+        /* Same look as the start page and the forms: charcoal header with a Tennessee Orange stripe, white card. */
+        :root {
+            --accent: #FF8200;
+            --accent-dark: #D96F00;
+            --ink: #2F3033;
+            --muted: #666B73;
+            --line: #DADDE3;
+            --slate: #4B4F56;
+            --slate-dark: #3A3D43;
+            --error: #B3261E;
+            --error-bg: #FDECEA;
+            --success: #1E6B3A;
+            --success-bg: #E8F5EC;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            min-height: 100vh;
+            color: var(--ink);
+            background: linear-gradient(180deg, #FFF7EF 0, #F4F6F8 240px, #F4F6F8 100%);
+        }
+
+        .header { background: #33363A; color: white; padding: 20px 0; border-bottom: 4px solid var(--accent); }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .header p { margin-top: 5px; font-size: 14px; opacity: 0.95; }
+
+        .main-content { max-width: 1200px; margin: 28px auto 36px; padding: 0 20px; }
+        .container {
+            background: white;
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 34px;
+            border: 1px solid rgba(0,0,0,0.06);
+            border-radius: 8px;
+            box-shadow: 0 18px 45px rgba(33, 37, 41, 0.10);
+        }
+
+        .home-link { display: inline-block; margin-bottom: 18px; color: var(--muted); font-size: 14px; text-decoration: none; }
+        .home-link:hover { color: var(--accent-dark); }
+
+        .page-title { font-size: 30px; font-weight: 600; line-height: 1.15; margin-bottom: 10px; }
+        .subtitle { color: var(--muted); font-size: 16px; line-height: 1.6; margin-bottom: 24px; }
+
+        .form-group { margin-bottom: 22px; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; }
+        .required { color: var(--accent); }
+        select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            font: inherit;
+            color: var(--ink);
+            background: white;
+        }
+        textarea { min-height: 96px; resize: vertical; }
+        select:focus, textarea:focus { outline: 3px solid rgba(255, 130, 0, 0.35); border-color: var(--accent); }
+        .help { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+        .preview {
+            display: none;
+            margin: 0 0 22px;
+            padding: 18px 20px;
+            background: #F9F9F9;
+            border-left: 4px solid var(--accent);
+            border-radius: 2px;
+        }
+        .preview h2 { font-size: 18px; margin-bottom: 12px; }
+        .preview table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .preview th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 12px 4px 0; width: 38%; vertical-align: top; }
+        .preview td { padding: 4px 0; word-break: break-word; }
+        .preview h3 { font-size: 14px; margin: 14px 0 6px; }
+        .preview ul { margin-left: 20px; font-size: 14px; }
+        .preview .note { margin-top: 12px; font-size: 13px; color: var(--muted); }
+        .preview a { color: var(--slate); }
+
+        .message { display: none; margin-bottom: 22px; padding: 14px 16px; border-radius: 6px; font-size: 15px; line-height: 1.5; }
+        .message.error { display: block; background: var(--error-bg); color: var(--error); }
+        .message.success { display: block; background: var(--success-bg); color: var(--success); }
+        .message button { margin-top: 10px; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 48px;
+            padding: 12px 22px;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            background: var(--slate);
+        }
+        .btn:hover { background: var(--slate-dark); }
+        .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+        .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+        .btn-small { min-height: 36px; padding: 8px 14px; font-size: 14px; }
+
+        .footer { max-width: 1200px; margin: 40px auto 20px; padding: 20px; text-align: center; color: #58595B; font-size: 14px; }
+
+        @media (max-width: 600px) {
+            .header h1 { font-size: 20px; }
+            .main-content { margin: 20px auto; }
+            .container { padding: 24px 20px; }
+            .page-title { font-size: 26px; }
+            .btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>Center for Advanced Materials & Manufacturing</h1>
+            <p>Sample Management System</p>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="container">
+            <a class="home-link" href="{{ url_for('index') }}">← Home</a>
+            <h1 class="page-title">Withdraw a record</h1>
+            <p class="subtitle">A withdrawn sample or data entry is hidden from Notion's main views. Nothing is deleted: its files, records and history stay, and submitting its name again in its form makes it active again.</p>
+
+            <div id="message" class="message" role="status"></div>
+
+            <form id="withdrawForm" novalidate>
+                <div class="form-group">
+                    <label for="kind">1. What do you want to withdraw? <span class="required">*</span></label>
+                    <select id="kind" name="kind">
+                        <option value="sample">A sample</option>
+                        <option value="result">A data entry</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="record">2. Which one? <span class="required">*</span></label>
+                    <select id="record" name="name">
+                        <option value="">Loading…</option>
+                    </select>
+                    <div class="help">Only active records are listed.</div>
+                </div>
+
+                <div id="preview" class="preview" aria-live="polite"></div>
+
+                <div class="form-group">
+                    <label for="reason">3. Reason <span class="required">*</span></label>
+                    <textarea id="reason" name="reason" placeholder="For example: used up, contaminated, wrong file, entered by mistake"></textarea>
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn" disabled>Withdraw</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>© 2025 University of Tennessee, Knoxville. All rights reserved.</p>
+    </div>
+
+<script>
+const kindSelect = document.getElementById('kind');
+const recordSelect = document.getElementById('record');
+const preview = document.getElementById('preview');
+const reasonInput = document.getElementById('reason');
+const submitBtn = document.getElementById('submitBtn');
+const messageDiv = document.getElementById('message');
+let checked = null;  // the record as /api/withdraw/check described it
+let submissionId = newSubmissionId();
+
+function newSubmissionId() {
+  return (window.crypto && window.crypto.randomUUID)
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function showMessage(kind, text) {
+  messageDiv.className = 'message ' + kind;
+  messageDiv.textContent = text;
+  messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function clearMessage() {
+  messageDiv.className = 'message';
+  messageDiv.textContent = '';
+}
+
+function element(tag, text) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;  // values come from Notion: always text, never HTML
+  return node;
+}
+
+async function loadRecords() {
+  checked = null;
+  preview.style.display = 'none';
+  submitBtn.disabled = true;
+  recordSelect.innerHTML = '';
+  recordSelect.appendChild(new Option('Loading…', ''));
+  const isSample = kindSelect.value === 'sample';
+  try {
+    const response = await fetch(isSample ? '/api/parent-samples' : '/api/parent-datasets');
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Could not load the list from Notion.');
+    const names = (isSample ? data.samples : data.datasets).map(item => item.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    recordSelect.innerHTML = '';
+    recordSelect.appendChild(new Option(names.length ? '-- Select --' : 'Nothing to withdraw', ''));
+    names.forEach(name => recordSelect.appendChild(new Option(name, name)));
+  } catch (error) {
+    recordSelect.innerHTML = '';
+    recordSelect.appendChild(new Option('Could not load the list', ''));
+    showMessage('error', error.message);
+  }
+}
+
+function renderPreview(record) {
+  preview.innerHTML = '';
+  preview.appendChild(element('h2', record.name));
+  const table = element('table');
+  record.details.forEach(([label, value]) => {
+    const row = element('tr');
+    row.appendChild(element('th', label));
+    row.appendChild(element('td', value));
+    table.appendChild(row);
+  });
+  preview.appendChild(table);
+  Object.entries(record.linked || {}).forEach(([label, items]) => {
+    if (!items.length) return;
+    preview.appendChild(element('h3', `${label} (${items.length}), which stay active`));
+    const list = element('ul');
+    items.forEach(item => list.appendChild(element('li', item.name || item.id)));
+    preview.appendChild(list);
+  });
+  if (record.url) {
+    const note = element('p');
+    note.className = 'note';
+    const link = element('a', 'Open in Notion ↗');
+    link.href = record.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    note.appendChild(link);
+    preview.appendChild(note);
+  }
+  preview.style.display = 'block';
+}
+
+async function checkRecord() {
+  clearMessage();
+  checked = null;
+  submitBtn.disabled = true;
+  preview.style.display = 'none';
+  if (!recordSelect.value) return;
+  try {
+    const response = await fetch('/api/withdraw/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: kindSelect.value, name: recordSelect.value })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Could not read the record from Notion.');
+    renderPreview(data);
+    if (data.withdrawn) {
+      showMessage('error', `"${data.name}" is already withdrawn (${data.withdrawn_reason || 'no reason recorded'}).`);
+      return;
+    }
+    checked = data;
+    submitBtn.disabled = false;
+  } catch (error) {
+    showMessage('error', error.message);
+  }
+}
+
+async function downloadReceipt(receipt) {
+  const response = await fetch('/api/receipt-pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(receipt)
+  });
+  if (!response.ok) throw new Error('Could not create the PDF receipt.');
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${receipt.title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+kindSelect.addEventListener('change', () => { clearMessage(); loadRecords(); });
+recordSelect.addEventListener('change', checkRecord);
+
+document.getElementById('withdrawForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!checked) return;
+  const reason = reasonInput.value.trim();
+  if (!reason) {
+    showMessage('error', 'Please give a reason for withdrawing this record.');
+    reasonInput.focus();
+    return;
+  }
+  const label = checked.kind === 'sample' ? 'sample' : 'data entry';
+  if (!window.confirm(`Withdraw the ${label} "${checked.name}"?\n\nIt will be hidden from Notion's main views. Nothing is deleted, and submitting its name again in its form makes it active again.`)) {
+    return;
+  }
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Withdrawing…';
+  try {
+    const response = await fetch('/api/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: checked.kind, name: checked.name, page_id: checked.page_id, reason, submission_id: submissionId })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Withdrawal failed.');
+    showMessage('success', data.message);
+    if (data.receipt) {
+      const button = element('button', 'Download PDF receipt');
+      button.type = 'button';
+      button.className = 'btn btn-small';
+      button.addEventListener('click', () => downloadReceipt(data.receipt).catch(error => showMessage('error', error.message)));
+      messageDiv.appendChild(element('br'));
+      messageDiv.appendChild(button);
+    }
+    submissionId = newSubmissionId();  // the next withdrawal is a new submission, not a retry of this one
+    reasonInput.value = '';
+    await loadRecords();
+  } catch (error) {
+    showMessage('error', error.message);
+    submitBtn.disabled = false;
+  } finally {
+    submitBtn.textContent = 'Withdraw';
+  }
+});
+
+loadRecords();
+</script>
+</body>
+</html>

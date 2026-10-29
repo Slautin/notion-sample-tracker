@@ -6,7 +6,7 @@ from typing import Any
 import requests
 from notion_client import Client
 
-from notion_sample_tracker.models import ARCHIVE_PENDING, PersonRef, ResultForm, SampleForm
+from notion_sample_tracker.models import ARCHIVE_PENDING, STATUS_WITHDRAWN, PersonRef, ResultForm, SampleForm
 from notion_sample_tracker.safety import safe_path_segment
 from notion_sample_tracker.services.formula import FormulaParser, ParsedFormula
 
@@ -23,11 +23,44 @@ class NotionRepository:
         self._title_property_cache: dict[str, str] = {}
         self._collection_api_cache: dict[str, str] = {}
 
-    def list_samples(self) -> list[dict[str, str]]:
-        return self._list_titles(self.samples_db)
+    def list_samples(self, include_withdrawn: bool = False) -> list[dict[str, str]]:
+        """Sample names for the forms' choice lists; withdrawn samples are left out unless asked for."""
+        return self._list_titles(self.samples_db, include_withdrawn)
 
-    def list_results(self) -> list[dict[str, str]]:
-        return self._list_titles(self.results_db)
+    def list_results(self, include_withdrawn: bool = False) -> list[dict[str, str]]:
+        """Data entry names for the forms' choice lists; withdrawn entries are left out unless asked for."""
+        return self._list_titles(self.results_db, include_withdrawn)
+
+    @staticmethod
+    def status_from_page(page: dict[str, Any]) -> str:
+        prop = page.get("properties", {}).get("Status", {})
+        return (prop.get("select") or {}).get("name", "") if prop.get("type") == "select" else ""
+
+    def linked_records(self, page_id: str, kind: str) -> dict[str, list[dict[str, str]]]:
+        """Active records that point at this one: a sample's data entries and sub-samples, or the entries derived
+        from a data entry. Queried rather than read from two-way relations, which a database may not have."""
+        if kind == "sample":
+            groups = {"Data entries": (self.results_db, "Sample"), "Sub-samples": (self.samples_db, "Parent Sample")}
+        else:
+            groups = {"Data entries derived from it": (self.results_db, "Related Results")}
+        linked = {}
+        for label, (database_id, property_name) in groups.items():
+            pages = self._query_all(database_id, filter={"property": property_name, "relation": {"contains": page_id}})
+            linked[label] = [
+                {"id": page["id"], "name": self._title_from_page(page)} for page in pages if self.status_from_page(page) != STATUS_WITHDRAWN
+            ]
+        return linked
+
+    def withdraw(self, page_id: str, reason: str, submission_id: str) -> dict[str, Any]:
+        """Mark a sample or data entry withdrawn, with its reason. Nothing is deleted."""
+        return self.client.pages.update(
+            page_id=page_id,
+            properties={
+                "Status": {"select": {"name": STATUS_WITHDRAWN}},
+                "Withdrawn Reason": self._rich_text(reason),
+                "Submission ID": self._rich_text(submission_id),
+            },
+        )
 
     def get_options(self) -> dict[str, list[str]]:
         samples_collection = self._retrieve_collection(self.samples_db)
@@ -472,20 +505,26 @@ class NotionRepository:
         results = response.get("results", [])
         return results[0] if results else None
 
-    def _list_titles(self, database_id: str) -> list[dict[str, str]]:
+    def _list_titles(self, database_id: str, include_withdrawn: bool = True) -> list[dict[str, str]]:
+        return [
+            {"id": page["id"], "name": self._title_from_page(page)}
+            for page in self._query_all(database_id)
+            if include_withdrawn or self.status_from_page(page) != STATUS_WITHDRAWN
+        ]
+
+    def _query_all(self, database_id: str, **query: Any) -> list[dict[str, Any]]:
+        """Every page a query matches, following Notion's pages of 100."""
         pages: list[dict[str, Any]] = []
         cursor = None
         while True:
-            kwargs: dict[str, Any] = {"page_size": 100}
+            kwargs: dict[str, Any] = {"page_size": 100, **query}
             if cursor:
                 kwargs["start_cursor"] = cursor
             response = self._query_collection(database_id, **kwargs)
             pages.extend(response.get("results", []))
             if not response.get("has_more"):
-                break
+                return pages
             cursor = response.get("next_cursor")
-
-        return [{"id": page["id"], "name": self._title_from_page(page)} for page in pages]
 
     def _database_property_options(self, database_id: str, property_name: str, property_type: str) -> list[str]:
         database = self._retrieve_collection(database_id)

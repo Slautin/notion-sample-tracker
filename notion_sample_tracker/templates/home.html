@@ -121,6 +121,8 @@
         .btn-primary:hover { background: var(--accent-dark); }
         .btn-secondary { background: var(--slate); }
         .btn-secondary:hover { background: var(--slate-dark); }
+        .btn-outline { background: white; color: var(--slate); border: 1px solid var(--line); }
+        .btn-outline:hover { border-color: var(--slate); color: var(--ink); }
 
         .hint {
             margin-top: 10px;
@@ -171,6 +173,12 @@
                 <a class="btn btn-primary" href="{{ url_for('new_sample') }}">+ Add sample</a>
                 <a class="btn btn-primary" href="{{ url_for('new_result') }}">+ Add results</a>
             </div>
+
+            <h2 class="section-title">Change records</h2>
+            <div class="actions">
+                <a class="btn btn-outline" href="{{ url_for('withdraw_page') }}">Withdraw a record</a>
+            </div>
+            <p class="hint">To correct a sample or data entry, submit its name again in its form; you see what would change before anything is saved.</p>
 
             {% if notion_links %}
             <h2 class="section-title">Browse in Notion</h2>

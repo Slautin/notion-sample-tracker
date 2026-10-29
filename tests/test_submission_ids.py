@@ -2,6 +2,8 @@
 import re
 from pathlib import Path
 
+import notion_sample_tracker.app as app_module
+
 from notion_fakes import api, chunked_upload, client, submit_sample  # noqa: F401 (fixtures)
 
 
@@ -56,6 +58,24 @@ def test_a_real_retry_is_still_recognised(api, client):
 
     assert response.status_code == 200
     assert response.get_json()["already_processed"] is True
+
+
+def test_a_resent_sample_is_recognised_although_notion_stores_its_formula_differently(api, client):
+    # Notion keeps PbTiO3 as TiPbO3; a retry must still count as the same submission.
+    first = submit_sample(client, submission_id="same-sample")
+    again = submit_sample(client, submission_id="same-sample")
+
+    assert first.status_code == 200, first.get_json()
+    assert again.status_code == 200, again.get_json()
+    assert again.get_json()["already_processed"] is True
+    assert api.titles("samples-db") == ["PTO54"]
+
+
+def test_revisions_in_the_same_second_get_their_own_folders():
+    ids = [app_module._revision_id() for _ in range(50)]
+
+    assert len(set(ids)) == 50
+    assert [item[:26] for item in ids] == sorted(item[:26] for item in ids)  # the time part sorts
 
 
 def _after_each_reset(template: str) -> list[str]:

@@ -90,7 +90,10 @@ class FakeNotionApi:
     # data sources
     def query(self, data_source_id, filter=None, **kwargs):
         rows = [page for page in self.store.values() if page["parent"].get("data_source_id") == data_source_id]
-        if filter:
+        if filter and "relation" in filter:
+            wanted = filter["relation"]["contains"]
+            rows = [page for page in rows if any(ref.get("id") == wanted for ref in page["properties"].get(filter["property"], {}).get("relation", []))]
+        elif filter:
             kind = "title" if "title" in filter else "rich_text"
             wanted = filter[kind]["equals"]
             rows = [

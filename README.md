@@ -122,6 +122,7 @@ Opening the app's address shows a start page in the same style as the forms. **A
 
 - Set the database links with `NOTION_SAMPLES_URL`, `NOTION_RESULTS_URL` and `NOTION_SOURCES_URL`. In Notion, open the database view you want people to see and use Copy link. A button without a link is hidden; a link without `https://` is refused at startup.
 - `NOTION_HOME_URL` (or the older `NOTION_PAGE`) adds an "Open the Notion workspace" link. The start page no longer redirects to Notion.
+- **Withdraw a record** opens the Withdraw page (`/withdraw`), described below.
 
 ## Amending records
 
@@ -136,7 +137,19 @@ For a data entry:
 - The parent (sample or dataset) cannot change, because the entry's files live in the parent's folder. To file the data elsewhere, use a new name.
 - Leave Data empty to keep the current file or link. A new file is stored next to the old one (`scan.csv`, `scan-1.csv`, ...) and `Link` points to it; the old file stays on the server.
 
-To withdraw a sample or data entry (used up, contaminated, a wrong file, entered by mistake), submit its name with Status `withdrawn` and a reason. This is an amendment like any other: the record, its files and its history stay, Notion shows the Status and `Withdrawn Reason`, and a Notion view can hide withdrawn records. A new record cannot start withdrawn. To reinstate a record, amend it with another Status; the reason stays on record. The `Status` and `Withdrawn Reason` fields have to be added in Notion first (see [Required Notion Schema](#required-notion-schema)); until then the form names the missing field instead of saving.
+### Withdrawing
+
+A sample or data entry that should no longer be used (used up, contaminated, a wrong file, entered by mistake) is withdrawn on the Withdraw page, never deleted:
+
+1. Choose Sample or Data entry, then the record from the list of active records.
+2. The page shows the record's main fields and the active data entries and sub-samples linked to it. Those stay active; withdraw them one by one if needed.
+3. Give a reason and confirm. Notion gets Status `withdrawn` and the `Withdrawn Reason`; the server saves the change as a revision, like an amendment, and offers a PDF receipt.
+
+Withdrawn records drop out of the forms' Parent Sample and Parent Dataset lists, and nothing new can be added under them. Notion's main views filter them out (Status is not `withdrawn`), and each database has a **Withdrawn** view that lists them. A view filter only hides: a withdrawn page still opens from a direct link, Notion search, its QR code, or the relation list of a record linked to it.
+
+To make a withdrawn record active again, submit its name in its form, as for any amendment. The confirmation says so, Status becomes the one chosen in the form (otherwise `in work` for a sample, `active` for a data entry), and `Withdrawn Reason` is cleared in Notion; the server's revisions keep it. A data entry or sub-sample whose parent is withdrawn can only be amended after the parent is active again, because the forms list active parents only.
+
+The `Status` and `Withdrawn Reason` fields have to exist in Notion (see [Required Notion Schema](#required-notion-schema)); until then the Withdraw page names the missing field instead of saving.
 
 Sources are matched by name. When a form adds a Source whose name already exists with a different email or affiliation, the form shows the change (`Ada Lovelace: Affiliation "UTK" → "ORNL"`) and asks before updating the person in Notion. Every record that links to that person then shows the new details. Details left empty keep the current ones. Each change is saved as `sources/<name>/revisions/<id>/record.json`. A misspelled name counts as a different person.
 

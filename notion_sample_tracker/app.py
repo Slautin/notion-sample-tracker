@@ -4,6 +4,7 @@ import json
 import io
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -20,6 +21,7 @@ from notion_sample_tracker.models import (
     PersonRef,
     ResultForm,
     SampleForm,
+    new_submission_id,
     now_iso,
 )
 from notion_sample_tracker.safety import is_allowed_extension, redact_for_log, safe_path_segment, safe_upload_filename
@@ -317,6 +319,32 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
                 return jsonify({**_duplicate_result_response(duplicate), "source_updates": source_updates}), 409
             return jsonify({"success": True, "source_updates": source_updates})
         except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+    @app.get("/withdraw")
+    def withdraw_page():
+        return render_template("withdraw.html")
+
+    @app.post("/api/withdraw/check")
+    def api_withdraw_check():
+        """What would be withdrawn: the record's main fields and the active records that point at it."""
+        try:
+            kind, page = _withdraw_target(notion, request.get_json(force=True, silent=True) or {})
+            return jsonify({"success": True, **_withdraw_preview(notion, kind, page)})
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+    @app.post("/api/withdraw")
+    def api_withdraw():
+        data = request.get_json(force=True, silent=True) or {}
+        backlog.append(BacklogEvent(action="withdraw", entity=str(data.get("kind") or ""), payload=data if isinstance(data, dict) else {}))
+        try:
+            return _submit_withdrawal(data, notion, storage, backlog)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            app_log("withdrawal_failed", error=str(exc))
+            backlog.append(BacklogEvent(action="withdraw", entity=str(data.get("kind") or ""), payload=data, status="failed", error=str(exc)))
             return jsonify({"success": False, "error": str(exc)}), 400
 
     @app.post("/api/submit")
@@ -914,29 +942,197 @@ def _submit_result_amendment(
     )
 
 
-def _check_status(form: SampleForm | ResultForm, notion: NotionRepository, kind: str) -> None:
-    """Rules for Status withdrawn, checked before anything is uploaded or written.
+# What kind of record the Withdraw page handles, as the person sees it; and the Status a withdrawn record gets
+# back when it is amended and the form names none.
+WITHDRAW_KINDS = {"sample": "sample", "result": "data entry"}
+REINSTATED_STATUS = {"sample": "in work", "result": "active"}
 
-    Only an existing record can be withdrawn, and only with a reason. Status and Withdrawn Reason are fields
-    the lab adds to the Notion databases; a clear message beats a Notion error if one is missing.
+
+def _check_status(form: SampleForm | ResultForm, notion: NotionRepository, kind: str) -> None:
+    """Status rules for the forms, checked before anything is uploaded or written.
+
+    Withdrawing happens on the Withdraw page, never through a form. The Results Status field is one the lab
+    adds in Notion; a clear message beats a Notion error if it is missing.
     """
-    is_sample = kind == "sample"
-    needed = ["Status"] if form.status and not is_sample else []  # Samples always had Status
     if form.status == STATUS_WITHDRAWN:
-        if not form.withdrawn_reason:
-            raise ValueError("Please give a reason for withdrawing this record.")
-        if not (notion.sample_exists if is_sample else notion.result_exists)(form.name):
-            raise ValueError(
-                f"Only an existing {kind} can be withdrawn. Submit it first; to withdraw it later, submit its name again with Status withdrawn."
-            )
-        needed.append("Withdrawn Reason")
-    if not needed:
-        return
-    database_id, label = (notion.samples_db, "Samples") if is_sample else (notion.results_db, "Results")
-    missing = notion.missing_properties(database_id, needed)
+        raise ValueError("To withdraw a record, use Withdraw a record on the start page.")
+    if form.status and kind != "sample":  # Samples always had Status
+        _require_fields(notion, "result", ["Status"])
+
+
+def _require_fields(notion: NotionRepository, kind: str, names: list[str]) -> None:
+    database_id, label = (notion.samples_db, "Samples") if kind == "sample" else (notion.results_db, "Results")
+    missing = notion.missing_properties(database_id, names)
     if missing:
         fields = " and ".join(f"'{name}'" for name in missing)
         raise ValueError(f"The {label} database in Notion has no {fields} field yet. Add it in Notion first (see the README).")
+
+
+def _check_parent_active(notion: NotionRepository, kind: str, name: str) -> None:
+    """Refuse to add a sub-sample or data entry under a withdrawn sample or data entry."""
+    if not name:
+        return
+    page = notion.sample_page_by_name(name) if kind == "sample" else notion.result_page_by_name(name)
+    if page and _page_select(page, "Status") == STATUS_WITHDRAWN:
+        raise ValueError(
+            f"The {WITHDRAW_KINDS[kind]} '{name}' is withdrawn, so nothing new can be added under it. "
+            "Amend it in its form to make it active again first."
+        )
+
+
+def _reinstate(form: SampleForm | ResultForm, page: dict[str, Any], kind: str) -> bool:
+    """An amendment of a withdrawn record makes it active again: the form's Status, or the default one.
+
+    Returns whether the record was withdrawn. The reason is then cleared in Notion; the server's revision
+    records keep it.
+    """
+    if _page_select(page, "Status") != STATUS_WITHDRAWN:
+        return False
+    form.status = form.status or REINSTATED_STATUS[kind]
+    form.withdrawn_reason = ""
+    return True
+
+
+def _with_reason_cleared(changes: list[dict[str, Any]], page: dict[str, Any]) -> list[dict[str, Any]]:
+    old_reason = _page_text(page, "Withdrawn Reason")
+    return [*changes, {"field": "Withdrawn Reason", "old": old_reason, "new": ""}] if old_reason else changes
+
+
+def _withdraw_target(notion: NotionRepository, data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    kind = str(data.get("kind") or "").strip()
+    name = str(data.get("name") or "").strip()
+    if kind not in WITHDRAW_KINDS:
+        raise ValueError("Choose whether to withdraw a sample or a data entry.")
+    if not name:
+        raise ValueError("Choose the record to withdraw.")
+    page = notion.sample_page_by_name(name) if kind == "sample" else notion.result_page_by_name(name)
+    if not page:
+        raise ValueError(f"No {WITHDRAW_KINDS[kind]} named '{name}' was found in Notion.")
+    return kind, page
+
+
+def _withdraw_preview(notion: NotionRepository, kind: str, page: dict[str, Any]) -> dict[str, Any]:
+    relations, _, _ = notion.describe_relations(page)
+
+    def names(property_name: str) -> str:
+        return ", ".join(item["name"] or item["id"] for item in relations.get(property_name, []))
+
+    if kind == "sample":
+        details = [
+            ["Sample Type", _page_select(page, "Sample Type")],
+            ["Composition", _page_text(page, "Composition")],
+            ["Parent Sample", names("Parent Sample")],
+        ]
+    else:
+        parent = names("Related Results") if _page_select(page, "Parent Entry") == "dataset" else names("Sample")
+        details = [
+            ["Data Type", _page_select(page, "Data Type")],
+            ["Parent", parent],
+            ["Brief Description", _page_text(page, "Brief Description")],
+            ["Link", _page_url(page, "Link")],
+        ]
+    status = _page_select(page, "Status")
+    details += [["Status", status], ["Created", str(page.get("created_time") or "")[:10]]]
+    return {
+        "kind": kind,
+        "page_id": page["id"],
+        "name": _page_title(page),
+        "url": page.get("url", ""),
+        "withdrawn": status == STATUS_WITHDRAWN,
+        "withdrawn_reason": _page_text(page, "Withdrawn Reason"),
+        "details": [row for row in details if row[1]],
+        "linked": notion.linked_records(page["id"], kind),
+    }
+
+
+def _record_folder(notion: NotionRepository, kind: str, page: dict[str, Any]) -> str:
+    """The server folder that holds a record's files and records, worked out as the forms did when it was created."""
+    if kind == "sample":
+        return notion.sample_storage_info_from_page(page)["folder"]
+    relations, _, _ = notion.describe_relations(page)
+    if _page_select(page, "Parent Entry") == "dataset":
+        parent_name = next((item["name"] for item in relations.get("Related Results", []) if item["name"]), "")
+        parent_folder = f"results/{_safe_segment(parent_name)}" if parent_name else "results"
+    else:
+        sample_id = _page_relation_id(page, "Sample")
+        parent_folder = notion.sample_storage_info(sample_id)["folder"] if sample_id else "results"
+    return f"{parent_folder}/results/{_safe_segment(_page_title(page))}"
+
+
+def _submit_withdrawal(data: dict[str, Any], notion: NotionRepository, storage: Storage, backlog: JsonlBacklog):
+    """Withdraw a sample or data entry: Status withdrawn with a reason, saved as a revision. Nothing is deleted."""
+    kind, page = _withdraw_target(notion, data)
+    label = WITHDRAW_KINDS[kind]
+    name = _page_title(page)
+    reason = str(data.get("reason") or "").strip()
+    submission_id = str(data.get("submission_id") or "").strip() or new_submission_id()
+    if not reason:
+        raise ValueError("Please give a reason for withdrawing this record.")
+    if str(data.get("page_id") or "").strip() != page["id"]:
+        raise ValueError("The record checked before does not match. Choose it again.")
+    status = _page_select(page, "Status")
+    if status == STATUS_WITHDRAWN:
+        if _same_text(_page_text(page, "Submission ID"), submission_id):
+            return jsonify({"success": True, "already_processed": True, "message": f"The {label} '{name}' was already withdrawn."})
+        raise ValueError(f"The {label} '{name}' is already withdrawn.")
+    _require_fields(notion, kind, ["Withdrawn Reason"] if kind == "sample" else ["Status", "Withdrawn Reason"])
+
+    folder = _record_folder(notion, kind, page)
+    revision_id = _revision_id()
+    changes = [
+        {"field": "Status", "old": status, "new": STATUS_WITHDRAWN},
+        {"field": "Withdrawn Reason", "old": _page_text(page, "Withdrawn Reason"), "new": reason},
+    ]
+    updated = notion.withdraw(page["id"], reason, submission_id)
+    try:
+        record, (revision_record, current_record), source_paths = _archive_record(
+            notion,
+            storage,
+            [f"{folder}/revisions/{revision_id}/record.json", f"{folder}/current/record.json"],
+            kind,
+            updated,
+            [],
+            revision_id=revision_id,
+            withdrawn_at=now_iso(),
+            reason=reason,
+            submission_id=submission_id,
+            notion_page_id=page["id"],
+            notion_page_url=page.get("url", ""),
+            changed_fields=changes,
+        )
+    except Exception as exc:
+        _safe_archive_status(notion, page["id"], ARCHIVE_FAILED, f"archive: {exc}")
+        raise
+    backlog.append(
+        BacklogEvent(
+            action="withdraw",
+            entity=kind,
+            payload={"name": name, "reason": reason, "submission_id": submission_id},
+            notion_page_id=page["id"],
+            onedrive_paths=[revision_record.path, current_record.path, *source_paths],
+            status="complete",
+        )
+    )
+    return jsonify(
+        {
+            "success": True,
+            "message": f"The {label} '{name}' is withdrawn and hidden from Notion's main views. Nothing was deleted.",
+            "revision_id": revision_id,
+            "notion_page_url": page.get("url", ""),
+            "receipt": {
+                "title": f"Withdrawal - {name}",
+                "rows": [
+                    ["Record Type", f"{label.capitalize()} withdrawal"],
+                    ["Name", name],
+                    ["Reason", reason],
+                    ["Previous Status", status or "(none)"],
+                    ["Revision ID", revision_id],
+                    ["Submission ID", submission_id],
+                    ["Notion URL", page.get("url", "")],
+                ],
+            },
+        }
+    )
 
 
 def _apply_source_updates(sources: list[PersonRef], notion: NotionRepository, storage: Storage, confirmed: bool) -> list[dict[str, str]]:
@@ -983,7 +1179,11 @@ def _result_duplicate_info(form: ResultForm, notion: NotionRepository) -> dict[s
             return None  # a retry of the submission that created or last amended this entry
     relations, _, _ = notion.describe_relations(existing)
     _check_same_result_parent(form, existing, relations, notion)
-    return {"page": existing, "changes": _result_field_changes(form, existing, relations)}
+    reinstates = _reinstate(form, existing, "result")
+    changes = _result_field_changes(form, existing, relations)
+    if reinstates:
+        changes = _with_reason_cleared(changes, existing)
+    return {"page": existing, "changes": changes, "reinstates": reinstates}
 
 
 def _duplicate_result_response(duplicate: dict[str, Any]) -> dict[str, Any]:
@@ -994,6 +1194,7 @@ def _duplicate_result_response(duplicate: dict[str, Any]) -> dict[str, Any]:
         "message": f"A data entry named '{_page_title(page)}' already exists.",
         "existing_result": {"page_id": page["id"], "url": page.get("url", ""), "name": _page_title(page)},
         "changes": duplicate["changes"],
+        "reinstates": duplicate.get("reinstates", False),
     }
 
 
@@ -1038,19 +1239,23 @@ def _sample_duplicate_info(form: SampleForm, notion: NotionRepository) -> dict[s
     existing = notion.sample_page_by_name(form.name)
     if not existing:
         return None
+    composition = _stored_composition(form, notion)
     if form.submission_id:
         existing_submission = notion.sample_page_by_submission(form.submission_id)
-        if existing_submission and existing_submission.get("id") == existing.get("id") and _sample_submission_matches_page(form, existing_submission):
+        if existing_submission and existing_submission.get("id") == existing.get("id") and _sample_submission_matches_page(form, existing_submission, composition):
             return None
+    reinstates = _reinstate(form, existing, "sample")
     relations, _, _ = notion.describe_relations(existing)
     changes = _sample_field_changes(
         form,
         existing,
         lambda value: notion.resolve_sample_page_id(value),
-        composition=_stored_composition(form, notion),
+        composition=composition,
         source_names=[item["name"] for item in relations.get("Source", [])],
     )
-    return {"page": existing, "changes": changes}
+    if reinstates:
+        changes = _with_reason_cleared(changes, existing)
+    return {"page": existing, "changes": changes, "reinstates": reinstates}
 
 
 def _stored_composition(form: SampleForm, notion: NotionRepository) -> str:
@@ -1077,6 +1282,7 @@ def _duplicate_sample_response(duplicate: dict[str, Any]) -> dict[str, Any]:
             "name": _page_title(page),
         },
         "changes": duplicate["changes"],
+        "reinstates": duplicate.get("reinstates", False),
     }
 
 
@@ -1146,7 +1352,8 @@ def _resolved_parent_id(value: str, resolve_parent: Callable[[str], str] | None)
 
 
 def _revision_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    """A folder name for one revision: sorts by time, and two revisions in the same second never share it."""
+    return f"{datetime.now(timezone.utc):%Y-%m-%dT%H-%M-%S-%f}Z-{uuid.uuid4().hex[:4]}"
 
 
 def _truthy(value: Any) -> bool:
@@ -1170,10 +1377,12 @@ def _validate_sample_form(form: SampleForm, notion: NotionRepository, allow_exis
         errors.append("Composition is required for a root sample.")
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
+    if _is_subsample(form.sample_type):
+        _check_parent_active(notion, "sample", form.parent_sample_id)
     if form.submission_id:
         existing_submission = notion.sample_page_by_submission(form.submission_id)
         if existing_submission:
-            if _sample_submission_matches_page(form, existing_submission):
+            if _sample_submission_matches_page(form, existing_submission, _stored_composition(form, notion)):
                 return
             raise ValueError(
                 "This loaded JSON was already submitted and no longer matches the existing Notion record. "
@@ -1183,11 +1392,12 @@ def _validate_sample_form(form: SampleForm, notion: NotionRepository, allow_exis
         raise ValueError(f"A sample with name '{form.name}' already exists. Please choose another name.")
 
 
-def _sample_submission_matches_page(form: SampleForm, page: dict[str, Any]) -> bool:
+def _sample_submission_matches_page(form: SampleForm, page: dict[str, Any], composition: str | None = None) -> bool:
+    """Whether a page holds this very submission (a retry). `composition` is the form's formula as Notion stores it."""
     checks = [
         _same_text(form.name, _page_title(page)),
         _same_text(form.sample_type, _page_select(page, "Sample Type")),
-        _same_optional_text(form.composition, _page_text(page, "Composition")),
+        _same_optional_text(form.composition if composition is None else composition, _page_text(page, "Composition")),
         _same_optional_text(form.status, _page_select(page, "Status")),
         _same_set(form.synthesis, _page_multi_select(page, "Synthesis")),
         _same_set(form.processing, _page_multi_select(page, "Processing")),
@@ -1299,8 +1509,13 @@ def _validate_result_raw(
             errors.append("The uploaded file was not found on the server. Please upload it again.")
     if errors:
         raise ValueError("Please fill required fields: " + " ".join(errors))
-    if not amending and notion.result_exists(name):
-        raise ValueError(f"A result with name '{name}' already exists. Please choose another name.")
+    if not amending:
+        if notion.result_exists(name):
+            raise ValueError(f"A result with name '{name}' already exists. Please choose another name.")
+        if parent_entry == "dataset":
+            _check_parent_active(notion, "result", parent_dataset)
+        else:
+            _check_parent_active(notion, "sample", parent_sample)
 
 
 def _sample_receipt(
