@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Find a Record</title>
+    <style>
+        /* Same look as the start page and the forms: charcoal header with a Tennessee Orange stripe, white card. */
+        :root {
+            --accent: #FF8200;
+            --accent-dark: #D96F00;
+            --ink: #2F3033;
+            --muted: #666B73;
+            --line: #DADDE3;
+            --slate: #4B4F56;
+            --slate-dark: #3A3D43;
+            --error: #B3261E;
+            --error-bg: #FDECEA;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            min-height: 100vh;
+            color: var(--ink);
+            background: linear-gradient(180deg, #FFF7EF 0, #F4F6F8 240px, #F4F6F8 100%);
+        }
+
+        .header { background: #33363A; color: white; padding: 20px 0; border-bottom: 4px solid var(--accent); }
+        .header-content { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .header p { margin-top: 5px; font-size: 14px; opacity: 0.95; }
+
+        .main-content { max-width: 1200px; margin: 28px auto 36px; padding: 0 20px; }
+        .container {
+            background: white;
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 34px;
+            border: 1px solid rgba(0,0,0,0.06);
+            border-radius: 8px;
+            box-shadow: 0 18px 45px rgba(33, 37, 41, 0.10);
+        }
+
+        .home-link { display: inline-block; margin-bottom: 18px; color: var(--muted); font-size: 14px; text-decoration: none; }
+        .home-link:hover { color: var(--accent-dark); }
+
+        .page-title { font-size: 30px; font-weight: 600; line-height: 1.15; margin-bottom: 10px; }
+        .subtitle { color: var(--muted); font-size: 16px; line-height: 1.6; margin-bottom: 24px; }
+
+        .form-group { margin-bottom: 22px; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; }
+        select, input[type="search"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            font: inherit;
+            color: var(--ink);
+            background: white;
+        }
+        select:focus, input:focus { outline: 3px solid rgba(255, 130, 0, 0.35); border-color: var(--accent); }
+        .search-row { display: flex; gap: 10px; }
+        .search-row input { flex: 1; }
+        .help { margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+        .message { display: none; margin-bottom: 22px; padding: 14px 16px; border-radius: 6px; font-size: 15px; line-height: 1.5; }
+        .message.error { display: block; background: var(--error-bg); color: var(--error); }
+
+        .record { display: none; margin-top: 8px; padding: 20px 22px; background: #F9F9F9; border-left: 4px solid var(--accent); border-radius: 2px; }
+        .record-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .record-head h2 { font-size: 22px; }
+        .badge { padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; background: #E7E9ED; color: var(--slate); }
+        .badge.withdrawn { background: var(--error-bg); color: var(--error); }
+        .note { margin-bottom: 14px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+        .record table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .record th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 12px 6px 0; width: 34%; vertical-align: top; border-top: 1px solid var(--line); }
+        .record td { padding: 6px 0; word-break: break-word; border-top: 1px solid var(--line); }
+        .record h3 { font-size: 15px; margin: 18px 0 6px; }
+        .record ul { margin-left: 20px; font-size: 14px; }
+        .record a { color: var(--slate); }
+
+        .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font: inherit;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            background: var(--accent);
+        }
+        .btn:hover { background: var(--accent-dark); }
+        .btn-secondary { background: var(--slate); }
+        .btn-secondary:hover { background: var(--slate-dark); }
+        .btn-outline { background: white; color: var(--slate); border: 1px solid var(--line); }
+        .btn-outline:hover { background: white; border-color: var(--slate); color: var(--ink); }
+        .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+        .footer { max-width: 1200px; margin: 40px auto 20px; padding: 20px; text-align: center; color: #58595B; font-size: 14px; }
+
+        @media (max-width: 600px) {
+            .header h1 { font-size: 20px; }
+            .main-content { margin: 20px auto; }
+            .container { padding: 24px 20px; }
+            .page-title { font-size: 26px; }
+            .search-row { flex-direction: column; }
+            .btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>Center for Advanced Materials & Manufacturing</h1>
+            <p>Sample Management System</p>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="container">
+            <a class="home-link" href="{{ url_for('index') }}">← Home</a>
+            <h1 class="page-title">Find a record</h1>
+            <p class="subtitle">Look up a sample or data entry as Notion has it now, and download it as a PDF record sheet or a JSON file. Withdrawn records are included.</p>
+
+            <div id="message" class="message" role="status"></div>
+
+            <form id="findForm" novalidate>
+                <div class="form-group">
+                    <label for="kind">1. What are you looking for?</label>
+                    <select id="kind">
+                        <option value="sample">A sample</option>
+                        <option value="result">A data entry</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="name">2. Name</label>
+                    <div class="search-row">
+                        <input type="search" id="name" list="names" autocomplete="off" placeholder="Start typing a name">
+                        <button type="submit" class="btn btn-secondary">Show</button>
+                    </div>
+                    <datalist id="names"></datalist>
+                    <div class="help" id="count">Loading names…</div>
+                </div>
+            </form>
+
+            <div id="record" class="record" aria-live="polite"></div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>© 2025 University of Tennessee, Knoxville. All rights reserved.</p>
+    </div>
+
+<script>
+const kindSelect = document.getElementById('kind');
+const nameInput = document.getElementById('name');
+const namesList = document.getElementById('names');
+const countHelp = document.getElementById('count');
+const recordBox = document.getElementById('record');
+const messageDiv = document.getElementById('message');
+let known = new Map();  // name -> withdrawn
+
+function showError(text) {
+  messageDiv.className = 'message error';
+  messageDiv.textContent = text;
+}
+
+function clearMessage() {
+  messageDiv.className = 'message';
+  messageDiv.textContent = '';
+}
+
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;  // values come from Notion: always text, never HTML
+  if (className) node.className = className;
+  return node;
+}
+
+function query() {
+  return new URLSearchParams({ kind: kindSelect.value, name: nameInput.value.trim() }).toString();
+}
+
+async function loadNames() {
+  namesList.innerHTML = '';
+  known = new Map();
+  countHelp.textContent = 'Loading names…';
+  try {
+    const response = await fetch(`/api/find/list?kind=${encodeURIComponent(kindSelect.value)}`);
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Could not load the names from Notion.');
+    data.records.forEach(record => {
+      known.set(record.name, record.withdrawn);
+      const option = document.createElement('option');
+      option.value = record.name;
+      if (record.withdrawn) option.label = `${record.name} (withdrawn)`;
+      namesList.appendChild(option);
+    });
+    const withdrawn = data.records.filter(record => record.withdrawn).length;
+    const total = data.records.length;
+    const noun = kindSelect.value === 'sample' ? (total === 1 ? 'sample' : 'samples') : (total === 1 ? 'data entry' : 'data entries');
+    countHelp.textContent = `${total} ${noun}` + (withdrawn ? `, ${withdrawn} withdrawn.` : '.');
+  } catch (error) {
+    countHelp.textContent = '';
+    showError(error.message);
+  }
+}
+
+function renderRecord(record) {
+  recordBox.innerHTML = '';
+  const head = element('div', undefined, 'record-head');
+  head.appendChild(element('h2', record.name));
+  if (record.status) head.appendChild(element('span', record.status, record.withdrawn ? 'badge withdrawn' : 'badge'));
+  recordBox.appendChild(head);
+  if (record.withdrawn) {
+    recordBox.appendChild(element('p', `Withdrawn: ${record.fields['Withdrawn Reason'] || 'no reason recorded'}. Submitting its name again in its form makes it active again.`, 'note'));
+  }
+
+  const table = element('table');
+  Object.entries(record.fields).forEach(([label, value]) => {
+    const row = element('tr');
+    row.appendChild(element('th', label));
+    const cell = element('td');
+    const text = Array.isArray(value) ? value.join(', ') : String(value);
+    if (/^https?:\/\//.test(text) && !text.includes(' ')) {
+      const link = element('a', text);
+      link.href = text;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      cell.appendChild(link);
+    } else {
+      cell.textContent = text;
+    }
+    row.appendChild(cell);
+    table.appendChild(row);
+  });
+  recordBox.appendChild(table);
+
+  Object.entries(record.linked || {}).forEach(([label, items]) => {
+    if (!items.length) return;
+    recordBox.appendChild(element('h3', `${label} (${items.length})`));
+    const list = element('ul');
+    items.forEach(item => list.appendChild(element('li', item.status === 'withdrawn' ? `${item.name} (withdrawn)` : item.name)));
+    recordBox.appendChild(list);
+  });
+
+  const actions = element('div', undefined, 'actions');
+  const pdf = element('a', 'Download PDF', 'btn');
+  pdf.href = `/api/find/pdf?${query()}`;
+  const json = element('a', 'Download JSON', 'btn btn-secondary');
+  json.href = `/api/find/json?${query()}`;
+  actions.append(pdf, json);
+  if (record.notion_url) {
+    const notion = element('a', 'Open in Notion ↗', 'btn btn-outline');
+    notion.href = record.notion_url;
+    notion.target = '_blank';
+    notion.rel = 'noopener noreferrer';
+    actions.appendChild(notion);
+  }
+  recordBox.appendChild(actions);
+  recordBox.style.display = 'block';
+}
+
+async function showRecord() {
+  clearMessage();
+  recordBox.style.display = 'none';
+  if (!nameInput.value.trim()) {
+    showError('Type or choose a name first.');
+    return;
+  }
+  try {
+    const response = await fetch(`/api/find/record?${query()}`);
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Could not read the record from Notion.');
+    renderRecord(data.record);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+kindSelect.addEventListener('change', () => {
+  clearMessage();
+  recordBox.style.display = 'none';
+  nameInput.value = '';
+  loadNames();
+});
+// Choosing a suggestion fills in a whole known name: show it straight away.
+nameInput.addEventListener('input', () => { if (known.has(nameInput.value)) showRecord(); });
+document.getElementById('findForm').addEventListener('submit', (event) => { event.preventDefault(); showRecord(); });
+
+loadNames();
+</script>
+</body>
+</html>

@@ -33,7 +33,29 @@ ACCENT = colors.HexColor("#f47c20")
 DARK = colors.HexColor("#30343a")
 
 
+# The words that differ between a receipt (after a submission) and a record sheet (a record looked up later).
+LABELS = {
+    "receipt": {"subtitle": "{} receipt", "number": "Receipt", "details": "Submission Details", "images": "Image Attachments"},
+    "record": {"subtitle": "{}", "number": "Record", "details": "Record Details", "images": "Photos"},
+}
+
+
 def make_receipt_pdf(title: str, rows: list[tuple[str, Any]], images: list[dict[str, Any]] | None = None) -> bytes:
+    return _make_pdf(title, rows, images, LABELS["receipt"])
+
+
+def make_record_pdf(title: str, rows: list[tuple[str, Any]], status: str, images: list[dict[str, Any]] | None = None) -> bytes:
+    """A record sheet: the record as Notion has it now, with its Status, QR code and photos."""
+    return _make_pdf(title, rows, images, LABELS["record"], status=status)
+
+
+def _make_pdf(
+    title: str,
+    rows: list[tuple[str, Any]],
+    images: list[dict[str, Any]] | None,
+    labels: dict[str, str],
+    status: str | None = None,
+) -> bytes:
     normalized_rows = [(str(key), _stringify(value)) for key, value in rows if _stringify(value)]
     notion_url = _row_value(normalized_rows, "Notion URL")
     record_type = _row_value(normalized_rows, "Record Type") or "Submission"
@@ -54,11 +76,11 @@ def make_receipt_pdf(title: str, rows: list[tuple[str, Any]], images: list[dict[
     )
     styles = _styles()
     story: list[Any] = []
-    story.extend(_header(title, record_type, receipt_no, generated_at, notion_url, styles))
-    story.extend(_summary_cards(normalized_rows, styles))
-    story.extend(_details_section(normalized_rows, styles))
+    story.extend(_header(title, record_type, receipt_no, generated_at, notion_url, styles, labels))
+    story.extend(_summary_cards(normalized_rows, styles, status))
+    story.extend(_details_section(normalized_rows, styles, labels["details"]))
     if image_previews:
-        story.extend(_image_section(image_previews, styles))
+        story.extend(_image_section(image_previews, styles, labels["images"]))
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buffer.getvalue()
@@ -71,14 +93,15 @@ def _header(
     generated_at: str,
     notion_url: str,
     styles: dict[str, ParagraphStyle],
+    labels: dict[str, str],
 ) -> list[Any]:
     left = [
         Paragraph("CAMM Sample Tracking", styles["eyebrow_light"]),
         Paragraph(_escape(title), styles["title"]),
-        Paragraph(f"{_escape(record_type)} receipt", styles["subtitle"]),
+        Paragraph(_escape(labels["subtitle"].format(record_type)), styles["subtitle"]),
     ]
     meta_rows = [
-        [Paragraph("Receipt", styles["meta_label"]), Paragraph(_escape(receipt_no), styles["meta_value"])],
+        [Paragraph(labels["number"], styles["meta_label"]), Paragraph(_escape(receipt_no), styles["meta_value"])],
         [Paragraph("Generated", styles["meta_label"]), Paragraph(_escape(generated_at), styles["meta_value"])],
     ]
     meta = Table(meta_rows, colWidths=[0.62 * inch, 1.25 * inch], hAlign="RIGHT")
@@ -118,12 +141,18 @@ def _header(
     return [table, Spacer(1, 0.22 * inch)]
 
 
-def _summary_cards(rows: list[tuple[str, str]], styles: dict[str, ParagraphStyle]) -> list[Any]:
+def _summary_cards(rows: list[tuple[str, str]], styles: dict[str, ParagraphStyle], status: str | None = None) -> list[Any]:
+    parent = (
+        _row_value(rows, "Sample")
+        or _row_value(rows, "Parent Sample")
+        or _row_value(rows, "Related Result")
+        or _row_value(rows, "Related Results")
+    )
     card_fields = [
         ("Name", _row_value(rows, "Name")),
         ("Type", _row_value(rows, "Data Type") or _row_value(rows, "Sample Type")),
-        ("Parent", _row_value(rows, "Sample") or _row_value(rows, "Parent Sample") or _row_value(rows, "Related Result")),
-        ("Status", _row_value(rows, "Archive Status") or "Saved"),
+        ("Parent", parent),
+        ("Status", status if status is not None else _row_value(rows, "Archive Status") or "Saved"),
     ]
     cells = []
     for label, value in card_fields:
@@ -146,12 +175,12 @@ def _summary_cards(rows: list[tuple[str, str]], styles: dict[str, ParagraphStyle
     return [table, Spacer(1, 0.24 * inch)]
 
 
-def _details_section(rows: list[tuple[str, str]], styles: dict[str, ParagraphStyle]) -> list[Any]:
+def _details_section(rows: list[tuple[str, str]], styles: dict[str, ParagraphStyle], title: str = "Submission Details") -> list[Any]:
     hidden = {"Record Type"}
     link_labels = {"Notion URL", "Link"}
     normal_rows = [(label, value) for label, value in rows if label not in hidden and label not in link_labels]
     link_rows = [(label, value) for label, value in rows if label in link_labels]
-    story: list[Any] = [Paragraph("Submission Details", styles["section"]), Spacer(1, 0.08 * inch)]
+    story: list[Any] = [Paragraph(_escape(title), styles["section"]), Spacer(1, 0.08 * inch)]
 
     detail_data = []
     for label, value in normal_rows:
@@ -171,8 +200,8 @@ def _details_section(rows: list[tuple[str, str]], styles: dict[str, ParagraphSty
     return story
 
 
-def _image_section(images: list[dict[str, Any]], styles: dict[str, ParagraphStyle]) -> list[Any]:
-    story: list[Any] = [Spacer(1, 0.24 * inch), Paragraph("Image Attachments", styles["section"]), Spacer(1, 0.1 * inch)]
+def _image_section(images: list[dict[str, Any]], styles: dict[str, ParagraphStyle], title: str = "Image Attachments") -> list[Any]:
+    story: list[Any] = [Spacer(1, 0.24 * inch), Paragraph(_escape(title), styles["section"]), Spacer(1, 0.1 * inch)]
     cells = []
     for item in images[:MAX_PREVIEW_IMAGES]:
         flowable = _image_flowable(item["bytes"])

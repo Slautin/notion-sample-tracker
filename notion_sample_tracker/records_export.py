@@ -130,8 +130,27 @@ def csv_bytes(columns: list[str], rows: list[list[str]]) -> bytes:
     return to_csv(columns, rows).encode("utf-8-sig")
 
 
+def property_items(prop: dict[str, Any], linked: list[dict[str, str]] | None = None) -> list[str] | None:
+    """The values of a many-valued property (choices, linked records, people, files) as a list; None for others."""
+    kind = prop.get("type")
+    value = prop.get(kind) if kind else None
+    if kind == "multi_select":
+        return [item.get("name", "") for item in value or []]
+    if kind == "relation":
+        names = {item.get("id"): item.get("name") for item in linked or []}
+        return [names.get(ref.get("id")) or ref.get("id", "") for ref in value or []]
+    if kind == "people":
+        return [person.get("name") or person.get("id", "") for person in value or []]
+    if kind == "files":
+        return [_file(item) for item in value or []]
+    return None
+
+
 def format_property(prop: dict[str, Any], linked: list[dict[str, str]] | None = None) -> str:
     """One Notion property value as text. `linked` holds the names of related pages, saved with the record."""
+    items = property_items(prop, linked)
+    if items is not None:
+        return JOIN.join(items)
     kind = prop.get("type")
     value = prop.get(kind) if kind else None
     if value is None:
@@ -140,8 +159,6 @@ def format_property(prop: dict[str, Any], linked: list[dict[str, str]] | None = 
         return "".join(item.get("plain_text", "") for item in value)
     if kind in {"select", "status"}:
         return value.get("name", "")
-    if kind == "multi_select":
-        return JOIN.join(item.get("name", "") for item in value)
     if kind == "number":
         return str(value)
     if kind in {"checkbox", "boolean"}:
@@ -151,13 +168,6 @@ def format_property(prop: dict[str, Any], linked: list[dict[str, str]] | None = 
         return f"{start} → {end}" if end else start
     if kind in {"string", "url", "email", "phone_number", "created_time", "last_edited_time"}:
         return str(value)
-    if kind == "files":
-        return JOIN.join(_file(item) for item in value)
-    if kind == "relation":
-        names = {item.get("id"): item.get("name") for item in linked or []}
-        return JOIN.join(names.get(ref.get("id")) or ref.get("id", "") for ref in value)
-    if kind == "people":
-        return JOIN.join(person.get("name") or person.get("id", "") for person in value)
     if kind in {"created_by", "last_edited_by"}:
         return value.get("name") or value.get("id", "")
     if kind == "unique_id":

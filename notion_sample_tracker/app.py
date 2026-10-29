@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import io
 import os
@@ -8,9 +9,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
+
+import requests
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 
+from notion_sample_tracker import records_export
 from notion_sample_tracker.access import install_access_control
 from notion_sample_tracker.models import (
     ARCHIVE_COMPLETE,
@@ -37,7 +42,7 @@ from notion_sample_tracker.services.local_storage import (
 )
 from notion_sample_tracker.services.notion_client import NotionRepository
 from notion_sample_tracker.services.onedrive_client import OneDriveClient, OneDriveConfigError
-from notion_sample_tracker.services.pdf_receipt import make_receipt_pdf
+from notion_sample_tracker.services.pdf_receipt import make_receipt_pdf, make_record_pdf
 from notion_sample_tracker.services.qrcode_service import make_qr_png_bytes
 from notion_sample_tracker.services.storage import Storage, UploadResult
 from notion_sample_tracker.settings import Settings
@@ -325,11 +330,66 @@ def create_app(settings_factory: Callable[[], Settings] = Settings.from_env) -> 
     def withdraw_page():
         return render_template("withdraw.html")
 
+    @app.get("/find")
+    def find_page():
+        return render_template("find.html")
+
+    @app.get("/api/find/list")
+    def api_find_list():
+        """Every sample or data entry, withdrawn ones included and marked, for the Find page's search."""
+        kind = request.args.get("kind", "")
+        if kind not in RECORD_KINDS:
+            return jsonify({"success": False, "error": "Choose a sample or a data entry."}), 400
+        try:
+            records = sorted(notion.list_with_status(kind), key=lambda item: item["name"].casefold())
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 500
+        return jsonify({"success": True, "records": [{"name": item["name"], "withdrawn": item["status"] == STATUS_WITHDRAWN} for item in records]})
+
+    @app.get("/api/find/record")
+    def api_find_record():
+        try:
+            kind, page = _record_target(notion, request.args)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        # Not jsonify: it sorts keys, and the fields come in display order.
+        body = json.dumps({"success": True, "record": _record_sheet(notion, kind, page)}, ensure_ascii=False)
+        return app.response_class(body, mimetype="application/json")
+
+    @app.get("/api/find/json")
+    def api_find_json():
+        try:
+            kind, page = _record_target(notion, request.args)
+        except ValueError as exc:
+            abort(404, str(exc))
+        sheet = _record_sheet(notion, kind, page)
+        response = app.response_class(json.dumps(sheet, indent=2, ensure_ascii=False) + "\n", mimetype="application/json")
+        response.headers["Content-Disposition"] = f'attachment; filename="{_safe_segment(sheet["name"])}.json"'
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+
+    @app.get("/api/find/pdf")
+    def api_find_pdf():
+        try:
+            kind, page = _record_target(notion, request.args)
+        except ValueError as exc:
+            abort(404, str(exc))
+        sheet = _record_sheet(notion, kind, page)
+        pdf = make_record_pdf(
+            f"{sheet['kind_label'].capitalize()} - {sheet['name']}",
+            _record_sheet_rows(sheet),
+            status=sheet["status"] or ("active" if kind == "result" else "-"),
+            images=_photo_previews(page),
+        )
+        response = send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True, download_name=f"{_safe_segment(sheet['name'])}.pdf")
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+
     @app.post("/api/withdraw/check")
     def api_withdraw_check():
         """What would be withdrawn: the record's main fields and the active records that point at it."""
         try:
-            kind, page = _withdraw_target(notion, request.get_json(force=True, silent=True) or {})
+            kind, page = _record_target(notion, request.get_json(force=True, silent=True) or {})
             return jsonify({"success": True, **_withdraw_preview(notion, kind, page)})
         except ValueError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
@@ -942,9 +1002,9 @@ def _submit_result_amendment(
     )
 
 
-# What kind of record the Withdraw page handles, as the person sees it; and the Status a withdrawn record gets
-# back when it is amended and the form names none.
-WITHDRAW_KINDS = {"sample": "sample", "result": "data entry"}
+# The kinds of record the Find and Withdraw pages handle, as people see them; and the Status a withdrawn record
+# gets back when it is amended and the form names none.
+RECORD_KINDS = {"sample": "sample", "result": "data entry"}
 REINSTATED_STATUS = {"sample": "in work", "result": "active"}
 
 
@@ -975,7 +1035,7 @@ def _check_parent_active(notion: NotionRepository, kind: str, name: str) -> None
     page = notion.sample_page_by_name(name) if kind == "sample" else notion.result_page_by_name(name)
     if page and _page_select(page, "Status") == STATUS_WITHDRAWN:
         raise ValueError(
-            f"The {WITHDRAW_KINDS[kind]} '{name}' is withdrawn, so nothing new can be added under it. "
+            f"The {RECORD_KINDS[kind]} '{name}' is withdrawn, so nothing new can be added under it. "
             "Amend it in its form to make it active again first."
         )
 
@@ -998,16 +1058,16 @@ def _with_reason_cleared(changes: list[dict[str, Any]], page: dict[str, Any]) ->
     return [*changes, {"field": "Withdrawn Reason", "old": old_reason, "new": ""}] if old_reason else changes
 
 
-def _withdraw_target(notion: NotionRepository, data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _record_target(notion: NotionRepository, data: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     kind = str(data.get("kind") or "").strip()
     name = str(data.get("name") or "").strip()
-    if kind not in WITHDRAW_KINDS:
+    if kind not in RECORD_KINDS:
         raise ValueError("Choose whether to withdraw a sample or a data entry.")
     if not name:
         raise ValueError("Choose the record to withdraw.")
     page = notion.sample_page_by_name(name) if kind == "sample" else notion.result_page_by_name(name)
     if not page:
-        raise ValueError(f"No {WITHDRAW_KINDS[kind]} named '{name}' was found in Notion.")
+        raise ValueError(f"No {RECORD_KINDS[kind]} named '{name}' was found in Notion.")
     return kind, page
 
 
@@ -1045,6 +1105,99 @@ def _withdraw_preview(notion: NotionRepository, kind: str, page: dict[str, Any])
     }
 
 
+# Fields shown first on the Find page and record sheet, in this order; the others follow A to Z.
+RECORD_FIELD_ORDER = {
+    "sample": [
+        "Sample Type", "Status", "Withdrawn Reason", "Composition", "Elements", "Parent Sample", "Synthesis",
+        "Synthesis Details", "Processing", "Processing Details", "Source", "Photos", "QRCode",
+    ],
+    "result": [
+        "Data Type", "Status", "Withdrawn Reason", "Brief Description", "Parent Entry", "Sample", "Related Results",
+        "Characterisation", "Upload Method", "Link", "Source", "QRCode",
+    ],
+}
+HIDDEN_RECORD_FIELDS = {"Submission ID"}  # the app's own bookkeeping
+# Notion stores uploaded files on its own hosts; only those are fetched for the record sheet's photos.
+NOTION_FILE_HOST_SUFFIXES = (".amazonaws.com", ".notion.so", ".notion.com", ".notion-static.com", ".notionusercontent.com")
+MAX_PHOTO_BYTES = 3 * 1024 * 1024
+
+
+def _record_sheet(notion: NotionRepository, kind: str, page: dict[str, Any]) -> dict[str, Any]:
+    """A record as Notion has it now: its fields as text or lists, and the records that link to it."""
+    relations, _, _ = notion.describe_relations(page)
+    properties = page.get("properties", {})
+    first = [name for name in RECORD_FIELD_ORDER[kind] if name in properties]
+    rest = sorted((name for name in properties if name not in first), key=str.casefold)
+    fields: dict[str, Any] = {}
+    for name in first + rest:
+        prop = properties[name]
+        if prop.get("type") == "title" or name in HIDDEN_RECORD_FIELDS:
+            continue
+        items = records_export.property_items(prop, relations.get(name))
+        value = [item for item in items if item] if items is not None else records_export.format_property(prop, relations.get(name))
+        if value:
+            fields[name] = value
+    status = _page_select(page, "Status")
+    return {
+        "kind": kind,
+        "kind_label": RECORD_KINDS[kind],
+        "name": _page_title(page),
+        "status": status,
+        "withdrawn": status == STATUS_WITHDRAWN,
+        "notion_page_id": page["id"],
+        "notion_url": page.get("url", ""),
+        "created_time": page.get("created_time", ""),
+        "last_edited_time": page.get("last_edited_time", ""),
+        "fields": fields,
+        "linked": notion.linked_records(page["id"], kind, include_withdrawn=True),
+        "exported_at": now_iso(),
+    }
+
+
+def _record_sheet_rows(sheet: dict[str, Any]) -> list[tuple[str, Any]]:
+    """The record sheet as label/value rows for the PDF."""
+    rows: list[tuple[str, Any]] = [("Record Type", f"{sheet['kind_label'].capitalize()} record"), ("Name", sheet["name"])]
+    rows += list(sheet["fields"].items())
+    for label, items in sheet["linked"].items():
+        if items:
+            rows.append((label, [f"{item['name']} (withdrawn)" if item["status"] == STATUS_WITHDRAWN else item["name"] for item in items]))
+    rows += [
+        ("Created", sheet["created_time"][:10]),
+        ("Last edited", sheet["last_edited_time"][:10]),
+        ("Notion URL", sheet["notion_url"]),
+    ]
+    return rows
+
+
+def _photo_previews(page: dict[str, Any], limit: int = 4) -> list[dict[str, str]]:
+    """A sample's photos stored by Notion, as data URLs for the record sheet. Links typed in by people are not fetched."""
+    previews = []
+    for item in page.get("properties", {}).get("Photos", {}).get("files", []):
+        if len(previews) == limit:
+            break
+        url = str((item.get("file") or {}).get("url") or "") if item.get("type") == "file" else ""
+        host = (urlparse(url).hostname or "").lower()
+        if not url.startswith("https://") or not host.endswith(NOTION_FILE_HOST_SUFFIXES):
+            continue
+        content, content_type = _download_image(url)
+        if content:
+            previews.append({"name": item.get("name", "photo"), "data_url": f"data:{content_type};base64,{base64.b64encode(content).decode('ascii')}"})
+    return previews
+
+
+def _download_image(url: str) -> tuple[bytes, str]:
+    """An image from Notion's file storage, or nothing if it is not an image, too large or unreachable."""
+    try:
+        with requests.get(url, timeout=10, stream=True, allow_redirects=False) as response:
+            content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            if response.status_code != 200 or not content_type.startswith("image/"):
+                return b"", ""
+            content = response.raw.read(MAX_PHOTO_BYTES + 1, decode_content=True)
+    except requests.RequestException:
+        return b"", ""
+    return (content, content_type) if 0 < len(content) <= MAX_PHOTO_BYTES else (b"", "")
+
+
 def _record_folder(notion: NotionRepository, kind: str, page: dict[str, Any]) -> str:
     """The server folder that holds a record's files and records, worked out as the forms did when it was created."""
     if kind == "sample":
@@ -1061,8 +1214,8 @@ def _record_folder(notion: NotionRepository, kind: str, page: dict[str, Any]) ->
 
 def _submit_withdrawal(data: dict[str, Any], notion: NotionRepository, storage: Storage, backlog: JsonlBacklog):
     """Withdraw a sample or data entry: Status withdrawn with a reason, saved as a revision. Nothing is deleted."""
-    kind, page = _withdraw_target(notion, data)
-    label = WITHDRAW_KINDS[kind]
+    kind, page = _record_target(notion, data)
+    label = RECORD_KINDS[kind]
     name = _page_title(page)
     reason = str(data.get("reason") or "").strip()
     submission_id = str(data.get("submission_id") or "").strip() or new_submission_id()

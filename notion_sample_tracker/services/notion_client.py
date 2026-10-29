@@ -36,9 +36,18 @@ class NotionRepository:
         prop = page.get("properties", {}).get("Status", {})
         return (prop.get("select") or {}).get("name", "") if prop.get("type") == "select" else ""
 
-    def linked_records(self, page_id: str, kind: str) -> dict[str, list[dict[str, str]]]:
-        """Active records that point at this one: a sample's data entries and sub-samples, or the entries derived
-        from a data entry. Queried rather than read from two-way relations, which a database may not have."""
+    def list_with_status(self, kind: str) -> list[dict[str, str]]:
+        """Every sample or data entry (kind "sample" or "result"), withdrawn ones included, with its Status."""
+        database_id = self.samples_db if kind == "sample" else self.results_db
+        return [
+            {"id": page["id"], "name": self._title_from_page(page), "status": self.status_from_page(page)}
+            for page in self._query_all(database_id)
+        ]
+
+    def linked_records(self, page_id: str, kind: str, include_withdrawn: bool = False) -> dict[str, list[dict[str, str]]]:
+        """Records that point at this one: a sample's data entries and sub-samples, or the entries derived from a
+        data entry; active ones only unless asked. Queried rather than read from two-way relations, which a
+        database may not have."""
         if kind == "sample":
             groups = {"Data entries": (self.results_db, "Sample"), "Sub-samples": (self.samples_db, "Parent Sample")}
         else:
@@ -47,7 +56,9 @@ class NotionRepository:
         for label, (database_id, property_name) in groups.items():
             pages = self._query_all(database_id, filter={"property": property_name, "relation": {"contains": page_id}})
             linked[label] = [
-                {"id": page["id"], "name": self._title_from_page(page)} for page in pages if self.status_from_page(page) != STATUS_WITHDRAWN
+                {"id": page["id"], "name": self._title_from_page(page), "status": self.status_from_page(page)}
+                for page in pages
+                if include_withdrawn or self.status_from_page(page) != STATUS_WITHDRAWN
             ]
         return linked
 

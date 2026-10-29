@@ -63,8 +63,8 @@ def test_the_check_shows_the_record_and_what_stays_linked_to_it(api, client):
     assert ["Composition", "TiPbO3"] in body["details"]
     assert ["Status", "in work"] in body["details"]
     assert body["linked"] == {
-        "Data entries": [{"id": api.page_named("XRD run 1")["id"], "name": "XRD run 1"}],
-        "Sub-samples": [{"id": api.page_named("PTO54-a")["id"], "name": "PTO54-a"}],
+        "Data entries": [{"id": api.page_named("XRD run 1")["id"], "name": "XRD run 1", "status": ""}],
+        "Sub-samples": [{"id": api.page_named("PTO54-a")["id"], "name": "PTO54-a", "status": ""}],
     }
 
 

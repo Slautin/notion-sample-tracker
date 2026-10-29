@@ -122,7 +122,7 @@ Opening the app's address shows a start page in the same style as the forms. **A
 
 - Set the database links with `NOTION_SAMPLES_URL`, `NOTION_RESULTS_URL` and `NOTION_SOURCES_URL`. In Notion, open the database view you want people to see and use Copy link. A button without a link is hidden; a link without `https://` is refused at startup.
 - `NOTION_HOME_URL` (or the older `NOTION_PAGE`) adds an "Open the Notion workspace" link. The start page no longer redirects to Notion.
-- **Withdraw a record** opens the Withdraw page (`/withdraw`), described below.
+- **Find a record** opens the Find page (`/find`) and **Withdraw a record** the Withdraw page (`/withdraw`), both described below.
 
 ## Amending records
 
@@ -136,6 +136,13 @@ For a data entry:
 
 - The parent (sample or dataset) cannot change, because the entry's files live in the parent's folder. To file the data elsewhere, use a new name.
 - Leave Data empty to keep the current file or link. A new file is stored next to the old one (`scan.csv`, `scan-1.csv`, ...) and `Link` points to it; the old file stays on the server.
+
+### Finding a record
+
+The Find page looks up a sample or data entry as Notion has it at that moment: choose Sample or Data entry and start typing a name. Withdrawn records are included and marked. The page shows the record's fields (the main ones first, empty ones left out), its Sources and parent by name, and the data entries and sub-samples that link to it, and offers:
+
+- **Download PDF**: a record sheet in the receipt layout, with the record's Status, its QR code and up to four of a sample's photos. Only photos stored by Notion are fetched; links people typed in are not.
+- **Download JSON**: the same record as a file: `kind`, `name`, `status`, the Notion page ID and address, `fields` (lists for multi-choice fields, linked records, people and files), `linked` and `exported_at`.
 
 ### Withdrawing
 
