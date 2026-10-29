@@ -1109,14 +1109,17 @@ def _withdraw_preview(notion: NotionRepository, kind: str, page: dict[str, Any])
 RECORD_FIELD_ORDER = {
     "sample": [
         "Sample Type", "Status", "Withdrawn Reason", "Composition", "Elements", "Parent Sample", "Synthesis",
-        "Synthesis Details", "Processing", "Processing Details", "Source", "Photos", "QRCode",
+        "Synthesis Details", "Processing", "Processing Details", "Source",
     ],
     "result": [
         "Data Type", "Status", "Withdrawn Reason", "Brief Description", "Parent Entry", "Sample", "Related Results",
-        "Characterisation", "Upload Method", "Link", "Source", "QRCode",
+        "Characterisation", "Upload Method", "Link", "Source",
     ],
 }
 HIDDEN_RECORD_FIELDS = {"Submission ID"}  # the app's own bookkeeping
+# Not shown either: file names (photos appear as pictures in the PDF, and Notion's file links expire), and Notion's
+# system fields, which name the app's own Notion connection and repeat the Created and Last edited dates.
+HIDDEN_RECORD_TYPES = {"files", "created_by", "last_edited_by", "created_time", "last_edited_time"}
 # Notion stores uploaded files on its own hosts; only those are fetched for the record sheet's photos.
 NOTION_FILE_HOST_SUFFIXES = (".amazonaws.com", ".notion.so", ".notion.com", ".notion-static.com", ".notionusercontent.com")
 MAX_PHOTO_BYTES = 3 * 1024 * 1024
@@ -1131,7 +1134,7 @@ def _record_sheet(notion: NotionRepository, kind: str, page: dict[str, Any]) -> 
     fields: dict[str, Any] = {}
     for name in first + rest:
         prop = properties[name]
-        if prop.get("type") == "title" or name in HIDDEN_RECORD_FIELDS:
+        if prop.get("type") == "title" or prop.get("type") in HIDDEN_RECORD_TYPES or name in HIDDEN_RECORD_FIELDS:
             continue
         items = records_export.property_items(prop, relations.get(name))
         value = [item for item in items if item] if items is not None else records_export.format_property(prop, relations.get(name))

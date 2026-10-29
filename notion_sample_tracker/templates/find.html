@@ -51,7 +51,8 @@
 
         .form-group { margin-bottom: 22px; }
         label { display: block; font-weight: 600; margin-bottom: 8px; }
-        select, input[type="search"] {
+        .required { color: var(--accent); }
+        select {
             width: 100%;
             padding: 12px;
             border: 1px solid var(--line);
@@ -60,9 +61,7 @@
             color: var(--ink);
             background: white;
         }
-        select:focus, input:focus { outline: 3px solid rgba(255, 130, 0, 0.35); border-color: var(--accent); }
-        .search-row { display: flex; gap: 10px; }
-        .search-row input { flex: 1; }
+        select:focus { outline: 3px solid rgba(255, 130, 0, 0.35); border-color: var(--accent); }
         .help { margin-top: 6px; font-size: 13px; color: var(--muted); }
 
         .message { display: none; margin-bottom: 22px; padding: 14px 16px; border-radius: 6px; font-size: 15px; line-height: 1.5; }
@@ -79,7 +78,7 @@
         .record td { padding: 6px 0; word-break: break-word; border-top: 1px solid var(--line); }
         .record h3 { font-size: 15px; margin: 18px 0 6px; }
         .record ul { margin-left: 20px; font-size: 14px; }
-        .record a { color: var(--slate); }
+        .record td a { color: var(--slate); }
 
         .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
         .btn {
@@ -111,7 +110,6 @@
             .main-content { margin: 20px auto; }
             .container { padding: 24px 20px; }
             .page-title { font-size: 26px; }
-            .search-row { flex-direction: column; }
             .btn { width: 100%; }
         }
     </style>
@@ -128,13 +126,13 @@
         <div class="container">
             <a class="home-link" href="{{ url_for('index') }}">← Home</a>
             <h1 class="page-title">Find a record</h1>
-            <p class="subtitle">Look up a sample or data entry as Notion has it now, and download it as a PDF record sheet or a JSON file. Withdrawn records are included.</p>
+            <p class="subtitle">Look up a sample or data entry as Notion has it now, and download it as a PDF record sheet or a JSON file. Withdrawn records are listed too, marked as withdrawn.</p>
 
             <div id="message" class="message" role="status"></div>
 
             <form id="findForm" novalidate>
                 <div class="form-group">
-                    <label for="kind">1. What are you looking for?</label>
+                    <label for="kind">1. What are you looking for? <span class="required">*</span></label>
                     <select id="kind">
                         <option value="sample">A sample</option>
                         <option value="result">A data entry</option>
@@ -142,13 +140,11 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="name">2. Name</label>
-                    <div class="search-row">
-                        <input type="search" id="name" list="names" autocomplete="off" placeholder="Start typing a name">
-                        <button type="submit" class="btn btn-secondary">Show</button>
-                    </div>
-                    <datalist id="names"></datalist>
-                    <div class="help" id="count">Loading names…</div>
+                    <label for="record-name">2. Which one? <span class="required">*</span></label>
+                    <select id="record-name">
+                        <option value="">Loading…</option>
+                    </select>
+                    <div class="help" id="count"></div>
                 </div>
             </form>
 
@@ -162,12 +158,10 @@
 
 <script>
 const kindSelect = document.getElementById('kind');
-const nameInput = document.getElementById('name');
-const namesList = document.getElementById('names');
+const recordSelect = document.getElementById('record-name');
 const countHelp = document.getElementById('count');
 const recordBox = document.getElementById('record');
 const messageDiv = document.getElementById('message');
-let known = new Map();  // name -> withdrawn
 
 function showError(text) {
   messageDiv.className = 'message error';
@@ -187,32 +181,49 @@ function element(tag, text, className) {
 }
 
 function query() {
-  return new URLSearchParams({ kind: kindSelect.value, name: nameInput.value.trim() }).toString();
+  return new URLSearchParams({ kind: kindSelect.value, name: recordSelect.value }).toString();
 }
 
 async function loadNames() {
-  namesList.innerHTML = '';
-  known = new Map();
-  countHelp.textContent = 'Loading names…';
+  recordBox.style.display = 'none';
+  recordSelect.innerHTML = '';
+  recordSelect.appendChild(new Option('Loading…', ''));
+  countHelp.textContent = '';
   try {
     const response = await fetch(`/api/find/list?kind=${encodeURIComponent(kindSelect.value)}`);
     const data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.error || 'Could not load the names from Notion.');
+    recordSelect.innerHTML = '';
+    recordSelect.appendChild(new Option(data.records.length ? '-- Select --' : 'Nothing found', ''));
     data.records.forEach(record => {
-      known.set(record.name, record.withdrawn);
-      const option = document.createElement('option');
-      option.value = record.name;
-      if (record.withdrawn) option.label = `${record.name} (withdrawn)`;
-      namesList.appendChild(option);
+      recordSelect.appendChild(new Option(record.withdrawn ? `${record.name} (withdrawn)` : record.name, record.name));
     });
     const withdrawn = data.records.filter(record => record.withdrawn).length;
     const total = data.records.length;
     const noun = kindSelect.value === 'sample' ? (total === 1 ? 'sample' : 'samples') : (total === 1 ? 'data entry' : 'data entries');
     countHelp.textContent = `${total} ${noun}` + (withdrawn ? `, ${withdrawn} withdrawn.` : '.');
   } catch (error) {
-    countHelp.textContent = '';
+    recordSelect.innerHTML = '';
+    recordSelect.appendChild(new Option('Could not load the list', ''));
     showError(error.message);
   }
+}
+
+function addRow(table, label, text) {
+  const row = element('tr');
+  row.appendChild(element('th', label));
+  const cell = element('td');
+  if (/^https?:\/\//.test(text) && !text.includes(' ')) {
+    const link = element('a', text);
+    link.href = text;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    cell.appendChild(link);
+  } else {
+    cell.textContent = text;
+  }
+  row.appendChild(cell);
+  table.appendChild(row);
 }
 
 function renderRecord(record) {
@@ -226,23 +237,9 @@ function renderRecord(record) {
   }
 
   const table = element('table');
-  Object.entries(record.fields).forEach(([label, value]) => {
-    const row = element('tr');
-    row.appendChild(element('th', label));
-    const cell = element('td');
-    const text = Array.isArray(value) ? value.join(', ') : String(value);
-    if (/^https?:\/\//.test(text) && !text.includes(' ')) {
-      const link = element('a', text);
-      link.href = text;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      cell.appendChild(link);
-    } else {
-      cell.textContent = text;
-    }
-    row.appendChild(cell);
-    table.appendChild(row);
-  });
+  Object.entries(record.fields).forEach(([label, value]) => addRow(table, label, Array.isArray(value) ? value.join(', ') : String(value)));
+  if (record.created_time) addRow(table, 'Created', record.created_time.slice(0, 10));
+  if (record.last_edited_time) addRow(table, 'Last edited', record.last_edited_time.slice(0, 10));
   recordBox.appendChild(table);
 
   Object.entries(record.linked || {}).forEach(([label, items]) => {
@@ -273,10 +270,7 @@ function renderRecord(record) {
 async function showRecord() {
   clearMessage();
   recordBox.style.display = 'none';
-  if (!nameInput.value.trim()) {
-    showError('Type or choose a name first.');
-    return;
-  }
+  if (!recordSelect.value) return;
   try {
     const response = await fetch(`/api/find/record?${query()}`);
     const data = await response.json();
@@ -287,15 +281,9 @@ async function showRecord() {
   }
 }
 
-kindSelect.addEventListener('change', () => {
-  clearMessage();
-  recordBox.style.display = 'none';
-  nameInput.value = '';
-  loadNames();
-});
-// Choosing a suggestion fills in a whole known name: show it straight away.
-nameInput.addEventListener('input', () => { if (known.has(nameInput.value)) showRecord(); });
-document.getElementById('findForm').addEventListener('submit', (event) => { event.preventDefault(); showRecord(); });
+kindSelect.addEventListener('change', () => { clearMessage(); loadNames(); });
+recordSelect.addEventListener('change', showRecord);
+document.getElementById('findForm').addEventListener('submit', (event) => event.preventDefault());
 
 loadNames();
 </script>

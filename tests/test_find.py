@@ -82,13 +82,40 @@ def test_a_sample_is_shown_with_its_fields_in_order_and_what_links_to_it(api, cl
     assert fields["Composition"] == "TiPbO3"
     assert fields["Elements"] == ["Ti", "Pb", "O"]
     assert fields["Source"] == ["Ada Lovelace"]
-    assert fields["Photos"] == ["front.png"]
+    assert "Photos" not in fields and "QRCode" not in fields  # file names say nothing; photos appear in the PDF
     assert "Archive Error" in api.page_named("PTO54")["properties"]  # present in Notion, but empty
     assert "Submission ID" not in fields and "Archive Error" not in fields  # bookkeeping and empty fields are left out
     assert record["linked"]["Data entries"] == [
         {"id": api.page_named("XRD run 1")["id"], "name": "XRD run 1", "status": ""},
         {"id": api.page_named("XRD run 2")["id"], "name": "XRD run 2", "status": "withdrawn"},
     ]
+
+
+def test_notions_system_fields_are_not_shown(api, client):
+    submit_sample(client)
+    bot = {"object": "user", "id": "bot-49018d41"}
+    api.page_named("PTO54")["properties"].update(
+        {
+            "Created by": {"type": "created_by", "created_by": bot},
+            "Last edited by": {"type": "last_edited_by", "last_edited_by": bot},
+            "Last edited time": {"type": "last_edited_time", "last_edited_time": "2026-10-28T20:43:00.000Z"},
+            "Files": {"type": "files", "files": [{"name": "notes.pdf", "type": "file", "file": {"url": NOTION_FILE_URL}}]},
+        }
+    )
+
+    record = _record(client, "PTO54")[1]["record"]
+
+    assert not {"Created by", "Last edited by", "Last edited time", "Files"} & set(record["fields"])
+    assert record["created_time"] and record["last_edited_time"]  # the dates are shown once, as Created and Last edited
+
+
+def test_the_page_lists_records_like_the_withdraw_page(client):
+    page = client.get("/find").get_data(as_text=True)
+
+    assert '<select id="record-name">' in page and "2. Which one?" in page
+    assert 'type="search"' not in page
+    # Links inside the record table only: a rule for every link in the box gave the dark button dark text.
+    assert ".record td a { color: var(--slate); }" in page and ".record a {" not in page
 
 
 def test_a_data_entry_is_shown_with_its_parent_and_link(api, client):

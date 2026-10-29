@@ -139,7 +139,7 @@ For a data entry:
 
 ### Finding a record
 
-The Find page looks up a sample or data entry as Notion has it at that moment: choose Sample or Data entry and start typing a name. Withdrawn records are included and marked. The page shows the record's fields (the main ones first, empty ones left out), its Sources and parent by name, and the data entries and sub-samples that link to it, and offers:
+The Find page looks up a sample or data entry as Notion has it at that moment: choose Sample or Data entry, then the record from the list. Withdrawn records are listed too, marked as withdrawn. The page shows the record's fields (the main ones first; empty ones, file names and Notion's Created by / Last edited by fields left out), its Sources and parent by name, the Created and Last edited dates, and the data entries and sub-samples that link to it, and offers:
 
 - **Download PDF**: a record sheet in the receipt layout, with the record's Status, its QR code and up to four of a sample's photos. Only photos stored by Notion are fetched; links people typed in are not.
 - **Download JSON**: the same record as a file: `kind`, `name`, `status`, the Notion page ID and address, `fields` (lists for multi-choice fields, linked records, people and files), `linked` and `exported_at`.
