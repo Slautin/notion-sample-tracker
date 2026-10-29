@@ -11,6 +11,10 @@ from notion_sample_tracker.safety import safe_path_segment
 from notion_sample_tracker.services.formula import FormulaParser, ParsedFormula
 
 
+# The Samples field that keeps a composition as it was typed (e.g. Ba(NO3)2) next to the normalised one (BaN2O6).
+TYPED_COMPOSITION_FIELD = "User composition names"
+
+
 class NotionRepository:
     def __init__(self, token: str, samples_db: str, results_db: str, people_db: str, formula_parser: FormulaParser):
         self.token = token
@@ -349,6 +353,7 @@ class NotionRepository:
         if parsed:
             properties["Composition"] = {"rich_text": [{"text": {"content": parsed.normalized_formula}}]}
             properties["Elements"] = {"multi_select": [{"name": element} for element in parsed.elements]}
+            properties.update(self._typed_composition(parsed))
         if form.parent_sample_id:
             parent_id = self._resolve_page_id(self.samples_db, form.parent_sample_id)
             properties["Parent Sample"] = {"relation": [{"id": parent_id}]}
@@ -380,6 +385,8 @@ class NotionRepository:
             parsed = self._parse_sample_formula(form) if form.composition else None
             properties["Composition"] = self._rich_text(parsed.normalized_formula if parsed else form.composition)
             properties["Elements"] = {"multi_select": [{"name": element} for element in parsed.elements]} if parsed else {"multi_select": []}
+            if parsed:
+                properties.update(self._typed_composition(parsed))
         if "Parent Sample" in field_names:
             parent_id = self._resolve_page_id(self.samples_db, form.parent_sample_id) if form.parent_sample_id else ""
             if parent_id and self._same_page_id(parent_id, page_id):
@@ -434,6 +441,18 @@ class NotionRepository:
         if form.status:
             properties["Status"] = {"select": {"name": form.status}}
         return properties
+
+    def _typed_composition(self, parsed: ParsedFormula) -> dict[str, Any]:
+        """The formula as typed, for the Samples field that keeps it, when it differs from the normalised one.
+
+        Written empty when they match, so an amendment never leaves an earlier typed form behind. Databases without
+        the field get nothing.
+        """
+        field = self._first_existing_property(self.samples_db, [TYPED_COMPOSITION_FIELD])
+        if not field:
+            return {}
+        typed = parsed.input_formula.strip()
+        return {field: self._rich_text(typed if typed != parsed.normalized_formula else "")}
 
     def _parse_sample_formula(self, form: SampleForm) -> ParsedFormula | None:
         if form.sample_type.lower().startswith("sub") and not form.composition:

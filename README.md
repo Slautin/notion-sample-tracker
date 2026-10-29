@@ -61,7 +61,7 @@ Samples database:
 
 - `Name` title
 - `Sample Type` select
-- `Composition` rich text
+- `Composition` rich text (the normalised formula, see [Compositions](#compositions))
 - `Elements` multi-select
 - `Synthesis` multi-select
 - `Synthesis Details` rich text
@@ -102,6 +102,8 @@ People database:
 - `Email` email
 - `Affiliation` rich text
 
+Optional: a `User composition names` rich text field in Samples keeps each composition as it was typed.
+
 The services intentionally keep property names centralized in `settings.py`, so adapting to another Notion workspace is a small config/code change instead of a scattered rewrite.
 
 ## Project Layout
@@ -123,6 +125,18 @@ Opening the app's address shows a start page in the same style as the forms. **A
 - Set the database links with `NOTION_SAMPLES_URL`, `NOTION_RESULTS_URL` and `NOTION_SOURCES_URL`. In Notion, open the database view you want people to see and use Copy link. A button without a link is hidden; a link without `https://` is refused at startup.
 - `NOTION_HOME_URL` (or the older `NOTION_PAGE`) adds an "Open the Notion workspace" link. The start page no longer redirects to Notion.
 - **Find a record** opens the Find page (`/find`) and **Withdraw a record** the Withdraw page (`/withdraw`), both described below.
+
+## Compositions
+
+A root sample's composition is stored in one normalised form, so the same material is always written the same way:
+
+- Brackets and hydrates are multiplied out: `Ba(NO3)2` → `BaN2O6`, `CuSO4·5H2O` (or `CuSO4*5H2O`) → `CuH10SO9`.
+- Amounts become the smallest whole numbers in the same ratio: `Co6O8` → `Co3O4`, `Al0.7Sc0.3N` → `Sc3Al7N10`, and `Al7Sc3N10` → `Sc3Al7N10` too.
+- Elements are written in order of electronegativity, as the periodic-table library writes formulas: `PbTiO3` → `TiPbO3`, `Ca(OH)2` → `CaH2O2`.
+
+`Elements` lists the elements in the same order, and the sample's server folder is named after the normalised composition (`samples/TiPbO3/<name>/`). When the typed formula differs from the stored one, it is kept in the `User composition names` field if the Samples database has one. A molecular formula is reduced like any other (`C6H6` → `HC`), so that field is where the molecule's own formula survives. Made-up symbols (`Xy`) and isotope symbols (`D2O`) are refused.
+
+Re-entering a composition in an amendment, in any notation of the same formula, is not a change. Amending a sample's composition gives its later files a new folder name; the earlier files stay where they are.
 
 ## Amending records
 

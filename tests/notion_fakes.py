@@ -51,6 +51,8 @@ class FakeNotionApi:
         self.unreadable: set[str] = set()
         # Fields a test takes out of a database, as if nobody had added them in Notion yet.
         self.missing_properties: dict[str, set[str]] = {database_id: set() for database_id in DATABASES}
+        # Fields a database has beyond the schema contract, as {name: type}, like Samples' "User composition names".
+        self.extra_properties: dict[str, dict[str, str]] = {database_id: {} for database_id in DATABASES}
         self.pages = self
         self.data_sources = self
 
@@ -82,6 +84,7 @@ class FakeNotionApi:
                 for requirement in TRACKER_SCHEMA[DATABASES[data_source_id]]
                 if requirement.name not in self.missing_properties[data_source_id]
             }
+            properties.update({name: {"type": kind, kind: {}} for name, kind in self.extra_properties[data_source_id].items()})
             return {"properties": properties}
         if page_id in self.unreadable:
             raise RuntimeError("Could not find page")

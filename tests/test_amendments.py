@@ -215,3 +215,53 @@ def test_a_sample_amendment_with_empty_choices_keeps_them(api, client):
     amended = api.page_named("PTO54")
     assert _names(amended, "Synthesis") == ["PLD"]
     assert _names(amended, "Processing") == ["Anneal"]
+
+
+# --- compositions ---
+
+
+def _text_of(page, name):
+    return "".join(item["plain_text"] for item in page["properties"].get(name, {}).get("rich_text", []))
+
+
+def test_a_sample_keeps_the_composition_as_typed_next_to_the_normalised_one(api, tmp_path):
+    import notion_sample_tracker.app as app_module
+    from notion_fakes import settings_for
+
+    api.extra_properties["samples-db"]["User composition names"] = "rich_text"
+    client = app_module.create_app(settings_factory=lambda: settings_for(tmp_path)).test_client()
+
+    submit_sample(client, sample_name="BN", composition="Ba(NO3)2")
+    submit_sample(client, sample_name="LN", composition="LiNbO3", photos=(io.BytesIO(b""), ""))
+
+    nitrate = api.page_named("BN")
+    assert _text_of(nitrate, "Composition") == "BaN2O6"
+    assert _names(nitrate, "Elements") == ["Ba", "N", "O"]
+    assert _text_of(nitrate, "User composition names") == "Ba(NO3)2"
+    assert _text_of(api.page_named("LN"), "User composition names") == ""  # typed as stored: nothing extra
+    assert (tmp_path / "files/samples/BaN2O6/BN/record.json").exists()
+
+
+def test_re_entering_a_composition_as_typed_is_no_change_and_a_new_one_updates_both_fields(api, tmp_path):
+    import notion_sample_tracker.app as app_module
+    from notion_fakes import settings_for
+
+    api.extra_properties["samples-db"]["User composition names"] = "rich_text"
+    client = app_module.create_app(settings_factory=lambda: settings_for(tmp_path)).test_client()
+    submit_sample(client, sample_name="BN", composition="Ba(NO3)2")
+    sample_id = api.page_named("BN")["id"]
+
+    same = client.post("/api/validate-sample", data={"sample_name": "BN", "sample_type": "Root Sample", "composition": "Ba(NO3)2", "synthesis": "PLD"})
+    changed = submit_sample(client, sample_name="BN", composition="Sr(NO3)2", amend_existing="true", existing_sample_id=sample_id, photos=(io.BytesIO(b""), ""))
+
+    assert [item["field"] for item in same.get_json()["changes"]] == []
+    assert [item["field"] for item in changed.get_json()["changed_fields"]] == ["Composition"]
+    sample = api.page_named("BN")
+    assert _text_of(sample, "Composition") == "SrN2O6"
+    assert _text_of(sample, "User composition names") == "Sr(NO3)2"
+
+
+def test_a_database_without_the_typed_composition_field_gets_nothing_extra(api, client):
+    submit_sample(client, sample_name="BN", composition="Ba(NO3)2")
+
+    assert "User composition names" not in api.page_named("BN")["properties"]
